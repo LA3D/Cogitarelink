@@ -1,0 +1,180 @@
+Title: Data Structures & The Information Architecture
+
+URL Source: https://southbridge-research.notion.site/Data-Structures-The-Information-Architecture-2055fec70db1814ba2a7c5fa2879ac21
+
+Markdown Content:
+Mermaid
+
+Preview
+
+Copy
+
+​
+
+The most fascinating aspect of Claude Code's data architecture is how it manages the transformation of data through multiple representations while maintaining streaming performance. Let's start with the core innovation:
+
+TypeScript
+
+Copy
+
+interface MessageTransformPipeline{ cliMessage:{ type:"user"|"assistant"|"attachment"|"progress" uuid:string timestamp:string message?: APICompatibleMessage  attachment?: AttachmentContent  progress?: ProgressUpdate } apiMessage:{ role:"user"|"assistant" content:string| ContentBlock[]} streamAccumulator:{ partial: Partial<APIMessage> deltas: ContentBlockDelta[] buffers: Map<string,string>}}
+
+​
+
+Why This Matters: This three-stage representation allows Claude Code to maintain UI responsiveness while handling complex streaming protocols. The CLI can update progress indicators using CliMessage metadata while the actual LLM communication uses a clean APIMessage format.
+
+Based on decompilation analysis, Claude Code implements a sophisticated type system for content:
+
+TypeScript
+
+Copy
+
+type ContentBlock=| TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock | DocumentBlock | VideoBlock | GuardContentBlock | ReasoningBlock | CachePointBlock interface ContentBlockMetrics{ TextBlock:{ memorySize:"O(text.length)", parseTime:"O(1)", serializeTime:"O(n)", streamable:true}, ImageBlock:{ memorySize:"O(1) + external", parseTime:"O(1)", serializeTime:"O(size)"|"O(1) for S3", streamable:false}, ToolUseBlock:{ memorySize:"O(JSON.stringify(input).length)", parseTime:"O(n) for JSON parse", serializeTime:"O(n)", streamable:true}}
+
+​
+
+One of Claude Code's most clever innovations is handling streaming JSON for tool inputs:
+
+TypeScript
+
+Copy
+
+class StreamingToolInputParser{private buffer:string='';private depth:number=0;private inString:boolean=false;private escape:boolean=false;addChunk(chunk:string): ParseResult {this.buffer += chunk;for(const char of chunk){if(!this.inString){if(char ==='{'|| char ==='[')this.depth++;else if(char ==='}'|| char ===']')this.depth--;}if(char ==='"'&&!this.escape){this.inString =!this.inString;}this.escape =(char ==='\\\\'&&!this.escape);}if(this.depth ===0&&this.buffer.length >0){try{return{ complete:true, value:JSON.parse(this.buffer)};}catch(e){if(this.inString){try{return{ complete:true, value:JSON.parse(this.buffer +'"'), repaired:true};}catch{}}return{ complete:false, error: e };}}return{ complete:false};}}
+
+​
+
+This parser can handle incremental JSON chunks from the LLM, attempting to parse as soon as the structure appears complete.
+
+Mermaid
+
+Preview
+
+Copy
+
+​
+
+The CliMessage type serves as the central nervous system of the application:
+
+TypeScript
+
+Copy
+
+interface CliMessage{ type:"user"|"assistant"|"attachment"|"progress" uuid:string timestamp:string message?:{ role:"user"|"assistant" id?:string model?:string stop_reason?: StopReason  stop_sequence?:string usage?: TokenUsage  content:string| ContentBlock[]} costUSD?:number durationMs?:number requestId?:string isApiErrorMessage?:boolean isMeta?:boolean attachment?: AttachmentContent progress?:{ toolUseID:string parentToolUseID?:string data:any}}interface CliMessagePerformance{ creation:"O(1)", serialization:"O(content size)", memoryRetention:"Weak references for large content", garbageCollection:"Eligible when removed from history array"}
+
+​
+
+Claude Code carefully controls where data structures can be modified:
+
+TypeScript
+
+Copy
+
+class MessageMutationControl{static accumulateStreamDelta( message: Partial<CliMessage>, delta: ContentBlockDelta ):void{if(delta.type ==='text_delta'){const lastBlock = message.content[message.content.length -1];if(lastBlock.type ==='text'){ lastBlock.text += delta.text;}}}static injectToolResult( history: CliMessage[], toolResult: ToolResultBlock ):void{const newMessage: CliMessage ={ type:'user', isMeta:true, message:{ role:'user', content:[toolResult]},}; history.push(newMessage);}static updateCostMetadata( message: CliMessage, usage: TokenUsage ):void{ message.costUSD =calculateCost(usage, message.model); message.durationMs = Date.now()-parseISO(message.timestamp);}}
+
+​
+
+Perhaps the most complex data structure is the dynamically assembled system prompt:
+
+TypeScript
+
+Copy
+
+interface SystemPromptPipeline{ sources:{ baseInstructions:string claudeMdContent: ClaudeMdLayer[] gitContext: GitContextData  directoryStructure: TreeData  toolDefinitions: ToolSpec[] modelAdaptations: ModelSpecificPrompt } assembly:{ order:['base','model','claude.md','git','files','tools'], separators: Map<string,string>, sizeLimit:number, prioritization:'recency'|'relevance'}}interface GitContextData{ currentBranch:string status:{ modified:string[] untracked:string[] staged:string[]} recentCommits:Array<{ hash:string message:string author:string timestamp:string}> uncommittedDiff?:string}
+
+​
+
+Plain Text
+
+Copy
+
+Project Root ├── .claude/ │ ├── CLAUDE.md (Local - highest priority) │ └── settings.json ├── ~/ │ └── .claude/ │ └── CLAUDE.md (User - second priority) ├── <project-root>/ │ └── .claude/ │ └── CLAUDE.md (Project - third priority) └── /etc/claude-code/ └── CLAUDE.md (Managed - lowest priority)
+
+​
+
+The loading mechanism implements an efficient merge strategy:
+
+TypeScript
+
+Copy
+
+class ClaudeMdLoader{private cache =new Map<string,{content:string, mtime:number}>();async loadMerged():Promise<string>{const layers =['/etc/claude-code/CLAUDE.md','~/.claude/CLAUDE.md','<project>/.claude/CLAUDE.md','.claude/CLAUDE.md'];const contents =await Promise.all( layers.map(path =>this.loadWithCache(path)));return this.mergeWithOverrides(contents);}private mergeWithOverrides(contents:string[]):string{}}
+
+​
+
+TypeScript
+
+Copy
+
+interface ToolDefinition{ name:string description:string prompt?:string inputSchema: ZodSchema  inputJSONSchema?: JSONSchema  call: AsyncGenerator<ToolProgress | ToolResult,void,void> checkPermissions?:( input:any, context: ToolUseContext, permContext: ToolPermissionContext )=>Promise<PermissionDecision>mapToolResultToToolResultBlockParam:( result:any, toolUseId:string)=> ContentBlock | ContentBlock[] isReadOnly:boolean isMcp?:boolean isEnabled?:(config:any)=>boolean getPath?:(input:any)=>string|undefined renderToolUseMessage?:(input:any)=> ReactElement }interface ToolDefinitionMemory{ staticSize:"~2KB per tool", zodSchema:"Lazy compilation, cached", jsonSchema:"Generated once, memoized", closures:"Retains context references"}
+
+​
+
+TypeScript
+
+Copy
+
+interface ToolUseContext{ abortController: AbortController  readFileState: Map<string,{ content:string timestamp:number}>getToolPermissionContext:()=> ToolPermissionContext  options:{ tools: ToolDefinition[] mainLoopModel:string debug?:boolean verbose?:boolean isNonInteractiveSession?:boolean maxThinkingTokens?:number} mcpClients?: McpClient[]}interface ToolPermissionContext{ mode:"default"|"acceptEdits"|"bypassPermissions" additionalWorkingDirectories: Set<string> alwaysAllowRules: Record<PermissionRuleScope,string[]> alwaysDenyRules: Record<PermissionRuleScope,string[]>}type PermissionRuleScope=|"cliArg"|"localSettings"|"projectSettings"|"policySettings"|"userSettings"
+
+​
+
+The Multi-Cloud/Process protocol reveals a sophisticated RPC system:
+
+1
+
+TypeScript
+
+Copy
+
+interface McpMessage{ jsonrpc:"2.0" id?:string|number}interface McpRequest extends McpMessage{ method:string params?:unknown}interface McpResponse extends McpMessage{ id:string|number result?:unknown error?:{ code:number message:string data?:unknown}}interface McpCapabilities{ experimental?: Record<string,any> roots?:boolean sampling?:boolean prompts?:boolean resources?:boolean tools?:boolean logging?:boolean}interface McpToolSpec{ name:string description?:string inputSchema: JSONSchema  isReadOnly?:boolean requiresConfirmation?:boolean timeout?:number maxRetries?:number}
+
+​
+
+Mermaid
+
+Preview
+
+Copy
+
+​
+
+TypeScript
+
+Copy
+
+interface SessionState{ sessionId:string originalCwd:string cwd:string totalCostUSD:number totalAPIDuration:number modelTokens: Record<string,{ inputTokens:number outputTokens:number cacheReadInputTokens:number cacheCreationInputTokens:number}> mainLoopModelOverride?:string initialMainLoopModel?:string sessionCounter:number locCounter:number prCounter:number commitCounter:number lastInteractionTime:number hasUnknownModelCost:boolean maxRateLimitFallbackActive:boolean modelStrings:string[]}class SessionManager{private static state: SessionState;static update<K extends keyof SessionState>( key:K, value: SessionState[K]):void{this.state[key]= value;this.persistToDisk();}static increment(metric:keyof SessionState):void{if(typeof this.state[metric]==='number'){this.state[metric]++;}}}
+
+​
+
+The platform-level streaming reveals a sophisticated protocol:
+
+TypeScript
+
+Copy
+
+interface BidirectionalStreamingProtocol{ clientPayload:{ bytes:string encoding:'base64' contentTypes:| ContinuedUserInput | ToolResultBlock | ConversationTurnInput } serverPayload:{ bytes:string encoding:'base64' eventTypes:| ContentBlockDeltaEvent | ToolUseRequestEvent | ErrorEvent | MetadataEvent }}class BidirectionalStreamManager{private encoder =new TextEncoder();private decoder =new TextDecoder();private buffer =new Uint8Array(65536); async *processStream(stream: ReadableStream){const reader = stream.getReader();let partial ='';while(true){const{ done, value }=await reader.read();if(done)break; partial +=this.decoder.decode(value,{ stream:true});const lines = partial.split('\\n'); partial = lines.pop()||'';for(const line of lines){if(line.startsWith('data: ')){const payload =JSON.parse(line.slice(6));yield this.decodePayload(payload);}}}}private decodePayload(payload:any){const bytes = Buffer.from(payload.bytes,'base64');return JSON.parse(bytes.toString());}}
+
+​
+
+TypeScript
+
+Copy
+
+class StringIntern{private static pool =new Map<string,string>();static intern(str:string):string{if(!this.pool.has(str)){this.pool.set(str, str);}return this.pool.get(str)!;}} message.type = StringIntern.intern(rawType); message.stop_reason = StringIntern.intern(reason);
+
+​
+
+TypeScript
+
+Copy
+
+class LazyContentBlock{private _raw:string;private _parsed?:any;constructor(raw:string){this._raw = raw;}get content(){if(!this._parsed){this._parsed =this.parse(this._raw);}return this._parsed;}private parse(raw:string):any{return JSON.parse(raw);}}
+
+​
+
+TypeScript
+
+Copy
+
+class ReadFileState{private cache =new Map<string, WeakRef<FileContent>>();private registry =new FinalizationRegistry((path:string)=>{this.cache.delete(path);});set(path:string, content: FileContent){const ref =new WeakRef(content);this.cache.set(path, ref);this.registry.register(content, path);}get(path:string): FileContent |undefined{const ref =this.cache.get(path);if(ref){const content = ref.deref();if(!content){this.cache.delete(path);}return content;}}}
+
+​

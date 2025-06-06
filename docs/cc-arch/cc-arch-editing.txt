@@ -1,0 +1,163 @@
+Title: File Editing: AI-Assisted Code Modification
+
+URL Source: https://southbridge-research.notion.site/File-Editing-AI-Assisted-Code-Modification-2055fec70db18100803ff7287c24c6cc
+
+Markdown Content:
+Mermaid
+
+Preview
+
+Copy
+
+​
+
+File editing in Claude Code isn't just about changing text—it's a carefully orchestrated pipeline designed to handle the complexities of AI-assisted code modification:
+
+TypeScript
+
+Copy
+
+class FileEditingPipeline{static async executeEdit( tool: EditTool, input: EditInput, context: ToolContext ):Promise<EditResult>{const validation =await this.validateEdit(input, context);if(!validation.valid){return{ success:false, error: validation.error };}const prepared =await this.prepareEdit(input, validation.fileState);const result =await this.applyEdit(prepared);const verified =await this.verifyEdit(result, input);return verified;}private static fileStates =new Map<string, FileState>();interface FileState{ content:string; hash:string; mtime:number; encoding: BufferEncoding; lineEndings:'\\n'|'\\r\\n'|'\\r'; isBinary:boolean; size:number;}}
+
+​
+
+Why Multiple Tools Instead of One Universal Editor?
+
+Tool Purpose Guarantees Failure Mode
+EditTool Single string replacement Exact match count Fails if occurrence ≠ expected
+MultiEditTool Sequential edits Atomic batch Fails if any edit invalid
+WriteTool Full replacement Complete overwrite Fails if not read first
+NotebookEditTool Cell operations Structure preserved Fails if cell missing
+
+Each tool provides specific guarantees that a universal editor couldn't maintain while remaining LLM-friendly.
+
+The most critical challenge in file editing is the line number prefix problem:
+
+TypeScript
+
+Copy
+
+const readOutput =` 1 function hello() { 2 console.log('Hello, world!'); 3 } `;const wrongOldString ="2 console.log('Hello, world!');";const correctOldString =" console.log('Hello, world!');";
+
+​
+
+The line number stripping logic:
+
+TypeScript
+
+Copy
+
+class LineNumberHandler{static readonly LINE_NUMBER_PATTERN=/^\\d+\\t/;static stripLineNumbers(content:string):string{return content .split('\\n').map(line => line.replace(this.LINE_NUMBER_PATTERN,'')).join('\\n');}static validateOldString( oldString:string, fileContent:string): ValidationResult {if(this.LINE_NUMBER_PATTERN.test(oldString)){return{ valid:false, error:'old_string appears to contain line number prefix. '+'Remove the number and tab at the start.', suggestion: oldString.replace(this.LINE_NUMBER_PATTERN,'')};}const occurrences =this.countOccurrences(fileContent, oldString);if(occurrences ===0){const possibleLineNumber = oldString.match(/^(\\d+)\\t/);if(possibleLineNumber){const lineNum =parseInt(possibleLineNumber[1]);const actualLine =this.getLine(fileContent, lineNum);return{ valid:false, error:`String not found. Did you include line number ${lineNum}?`, suggestion: actualLine };}}return{ valid:true, occurrences };}}
+
+​
+
+The EditTool implements exact string matching with zero ambiguity:
+
+TypeScript
+
+Copy
+
+class EditToolImplementation{static async executeEdit( input: EditInput, context: ToolContext ):Promise<EditResult>{const{ file_path, old_string, new_string, expected_replacements =1}= input;const cachedFile = context.readFileState.get(file_path);if(!cachedFile){throw new Error('File must be read with ReadFileTool before editing. '+'This ensures you have the current file content.');}const currentStats =await fs.stat(file_path);if(currentStats.mtimeMs !== cachedFile.timestamp){throw new Error('File has been modified externally since last read. '+'Please read the file again to see current content.');}const validation =this.validateEdit( old_string, new_string, cachedFile.content, expected_replacements );if(!validation.valid){throw new Error(validation.error);}const newContent =this.performReplacement( cachedFile.content, old_string, new_string, expected_replacements );const diff =this.generateDiff( cachedFile.content, newContent, file_path );await this.writeFilePreservingFormat( file_path, newContent, cachedFile ); context.readFileState.set(file_path,{ content: newContent, timestamp: Date.now()});const snippet =this.generateContextSnippet( newContent, new_string,5);return{ success:true, diff, snippet, replacements: expected_replacements };}private static validateEdit( oldString:string, newString:string, fileContent:string, expectedReplacements:number): EditValidation {if(oldString === newString){return{ valid:false, error:'old_string and new_string are identical. No changes would be made.'};}if(oldString ===''){return{ valid:false, error:'Empty old_string not allowed. Use WriteTool for new files.'};}const occurrences =this.countExactOccurrences(fileContent, oldString);if(occurrences ===0){return{ valid:false, error:'old_string not found in file. Ensure exact match including whitespace.', suggestion:this.findSimilarStrings(fileContent, oldString)};}if(occurrences !== expectedReplacements){return{ valid:false, error:`Expected ${expectedReplacements} replacement(s) but found ${occurrences} occurrence(s). `+`Set expected_replacements to ${occurrences} or refine old_string.`};}return{ valid:true};}private static countExactOccurrences( content:string, searchString:string):number{const escaped = searchString.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&');const regex =new RegExp(escaped,'g');return(content.match(regex)||[]).length;}private static performReplacement( content:string, oldString:string, newString:string, limit:number):string{const escapeReplacement=(str:string)=>{return str .replace(/\\$/g,'$$$$').replace(/\\n/g,'\\n').replace(/\\r/g,'\\r');};const escapedNew =escapeReplacement(newString);let result = content;let count =0;let lastIndex =0;while(count < limit){const index = result.indexOf(oldString, lastIndex);if(index ===-1)break; result = result.slice(0, index)+ newString + result.slice(index + oldString.length); lastIndex = index + newString.length; count++;}return result;}private static generateDiff( oldContent:string, newContent:string, filePath:string):string{const diff =createUnifiedDiff( filePath, filePath, oldContent, newContent,'before edit','after edit',{ context:3});return diff;}}
+
+​
+
+Why expected_replacements Matters:
+
+TypeScript
+
+Copy
+
+const fileContent =` function processUser(user) { console.log(user); return user; } `;edit({ old_string:"user", new_string:"userData"});edit({ old_string:"user", new_string:"userData", expected_replacements:2});
+
+​
+
+MultiEditTool solves the complex problem of multiple related edits:
+
+TypeScript
+
+Copy
+
+class MultiEditToolImplementation{static async executeMultiEdit( input: MultiEditInput, context: ToolContext ):Promise<MultiEditResult>{const{ file_path, edits }= input;const cachedFile = context.readFileState.get(file_path);if(!cachedFile){throw new Error('File must be read before editing');}const validationResult =this.validateAllEdits( edits, cachedFile.content );if(!validationResult.valid){throw new Error(validationResult.error);}let workingContent = cachedFile.content;const appliedEdits: AppliedEdit[]=[];for(let i =0; i < edits.length; i++){const edit = edits[i];try{const validation =this.validateSingleEdit( edit, workingContent, i );if(!validation.valid){throw new Error(`Edit ${i +1} failed: ${validation.error}`);}const beforeEdit = workingContent; workingContent =this.applyEdit( workingContent, edit ); appliedEdits.push({ index: i, edit, diff:this.generateEditDiff(beforeEdit, workingContent), summary:this.summarizeEdit(edit)});}catch(error){throw new Error(`MultiEdit aborted at edit ${i +1}/${edits.length}: ${error.message}`);}}await this.writeFilePreservingFormat( file_path, workingContent, cachedFile ); context.readFileState.set(file_path,{ content: workingContent, timestamp: Date.now()});return{ success:true, editsApplied: appliedEdits, totalDiff:this.generateDiff( cachedFile.content, workingContent, file_path )};}private static validateAllEdits( edits: Edit[], originalContent:string): ValidationResult {if(edits.length ===0){return{ valid:false, error:'No edits provided'};}const conflicts =this.detectEditConflicts(edits, originalContent);if(conflicts.length >0){return{ valid:false, error:'Edit conflicts detected:\\n'+ conflicts.map(c => c.description).join('\\n')};}let simulatedContent = originalContent;for(let i =0; i < edits.length; i++){const edit = edits[i];const occurrences =this.countOccurrences( simulatedContent, edit.old_string );if(occurrences ===0){return{ valid:false, error:`Edit ${i +1}: old_string not found. `+`Previous edits may have removed it.`};}if(occurrences !==(edit.expected_replacements ||1)){return{ valid:false, error:`Edit ${i +1}: Expected ${edit.expected_replacements ||1}`+`replacements but found ${occurrences}`};} simulatedContent =this.applyEdit(simulatedContent, edit);}return{ valid:true};}private static detectEditConflicts( edits: Edit[], content:string): EditConflict[]{const conflicts: EditConflict[]=[];for(let i =0; i < edits.length -1; i++){for(let j = i +1; j < edits.length; j++){const edit1 = edits[i];const edit2 = edits[j];if(edit2.old_string.includes(edit1.new_string)){ conflicts.push({ type:'dependency', edits:[i, j], description:`Edit ${j +1} depends on result of edit ${i +1}`});}if(this.editsOverlap(edit1, edit2, content)){ conflicts.push({ type:'overlap', edits:[i, j], description:`Edits ${i +1} and ${j +1} affect overlapping text`});}if(edit1.old_string === edit2.old_string && edit1.new_string !== edit2.new_string){ conflicts.push({ type:'contradiction', edits:[i, j], description:`Edits ${i +1} and ${j +1} replace same text differently`});}}}return conflicts;}private static editsOverlap( edit1: Edit, edit2: Edit, content:string):boolean{const positions1 =this.findAllPositions(content, edit1.old_string);const positions2 =this.findAllPositions(content, edit2.old_string);for(const pos1 of positions1){const end1 = pos1 + edit1.old_string.length;for(const pos2 of positions2){const end2 = pos2 + edit2.old_string.length;if(pos1 < end2 && pos2 < end1){return true;}}}return false;}}
+
+​
+
+Conflict Detection in Action:
+
+TypeScript
+
+Copy
+
+const edits =[{ old_string:"console.log", new_string:"logger.info"},{ old_string:"logger.info('test')", new_string:"logger.debug('test')"}];const safeEdits =[{ old_string:"var x", new_string:"let x"},{ old_string:"var y", new_string:"let y"}];
+
+​
+
+WriteTool handles complete file creation or replacement:
+
+TypeScript
+
+Copy
+
+class WriteToolImplementation{static async executeWrite( input: WriteInput, context: ToolContext ):Promise<WriteResult>{const{ file_path, content }= input;const exists =await fs.access(file_path).then(()=>true).catch(()=>false);if(exists){const cachedFile = context.readFileState.get(file_path);if(!cachedFile){throw new Error('Existing file must be read with ReadFileTool before overwriting. '+'This prevents accidental data loss.');}const stats =await fs.stat(file_path);if(stats.mtimeMs !== cachedFile.timestamp){throw new Error('File has been modified externally. '+'Read the file again to see current content before overwriting.');}}if(this.isDocumentationFile(file_path)&&!context.explicitlyAllowed){throw new Error('Creating documentation files (*.md, README) requires explicit user request. '+'Focus on code implementation unless specifically asked for docs.');}const writeData =await this.prepareWriteData( content, exists ? context.readFileState.get(file_path):null);const dir = path.dirname(file_path);await fs.mkdir(dir,{ recursive:true});await fs.writeFile(file_path, writeData.content,{ encoding: writeData.encoding, mode: writeData.mode }); context.readFileState.set(file_path,{ content: content, timestamp: Date.now()});if(exists){const snippet =this.generateContextSnippet(content,null,10);return{ success:true, action:'updated', snippet };}else{return{ success:true, action:'created', path: file_path };}}private static async prepareWriteData( content:string, existingFile: FileState |null):Promise<WriteData>{let lineEnding ='\\n';if(existingFile){ lineEnding = existingFile.lineEndings;}else if(process.platform ==='win32'){ lineEnding ='\\r\\n';}const normalizedContent = content.replace(/\\r\\n|\\r|\\n/g,'\\n');const finalContent = normalizedContent.replace(/\\n/g, lineEnding);const encoding = existingFile?.encoding ||'utf8';const mode = existingFile ?(await fs.stat(existingFile.path)).mode :0o644;return{ content: finalContent, encoding, mode };}}
+
+​
+
+Every edit operation goes through multiple validation layers:
+
+TypeScript
+
+Copy
+
+class FileValidationPipeline{static async validateFileOperation( operation: FileOperation, context: ToolContext ):Promise<ValidationResult>{const pathValidation =await this.validatePath(operation.path, context);if(!pathValidation.valid)return pathValidation;const permissionCheck =await this.checkPermissions(operation, context);if(!permissionCheck.valid)return permissionCheck;const stateValidation =await this.validateFileState(operation, context);if(!stateValidation.valid)return stateValidation;const contentValidation =await this.validateContent(operation);if(!contentValidation.valid)return contentValidation;const safetyCheck =await this.performSafetyChecks(operation, context);if(!safetyCheck.valid)return safetyCheck;return{ valid:true};}private static async validatePath( filePath:string, context: ToolContext ):Promise<ValidationResult>{if(!path.isAbsolute(filePath)){return{ valid:false, error:'File path must be absolute', suggestion: path.resolve(filePath)};}const resolved = path.resolve(filePath);const normalized = path.normalize(filePath);if(resolved !== normalized){return{ valid:false, error:'Path contains suspicious traversal patterns'};}const projectRoot = context.projectRoot;const allowed =[ projectRoot,...context.additionalWorkingDirectories ];const isAllowed = allowed.some(dir => resolved.startsWith(path.resolve(dir)));if(!isAllowed){return{ valid:false, error:'Path is outside allowed directories', allowedDirs: allowed };}const forbidden =[/\\.git\\//,/node_modules\\//,/\\.env$/,/\\.ssh\\//,/\\.gnupg\\//];if(forbidden.some(pattern => pattern.test(resolved))){return{ valid:false, error:'Operation on sensitive files not allowed'};}return{ valid:true};}private static async validateFileState( operation: FileOperation, context: ToolContext ):Promise<ValidationResult>{if(operation.type ==='create'){const exists =await fs.access(operation.path).then(()=>true).catch(()=>false);if(exists &&!operation.overwrite){return{ valid:false, error:'File already exists. Use WriteTool with prior read to overwrite.'};}}if(operation.type ==='edit'|| operation.type ==='overwrite'){const cached = context.readFileState.get(operation.path);if(!cached){return{ valid:false, error:'File must be read before editing'};}try{const stats =await fs.stat(operation.path);if(stats.mtimeMs !== cached.timestamp){const timeDiff = stats.mtimeMs - cached.timestamp;return{ valid:false, error:'File has been modified externally', details:{ cachedTime:new Date(cached.timestamp), currentTime:new Date(stats.mtimeMs), difference:`${Math.abs(timeDiff)}ms`}};}}catch(error){return{ valid:false, error:'File no longer exists or is inaccessible'};}}return{ valid:true};}}
+
+​
+
+Every edit produces rich feedback for the LLM:
+
+TypeScript
+
+Copy
+
+class DiffGenerator{static generateEditFeedback( operation: EditOperation, result: EditResult ): EditFeedback {const feedback: EditFeedback ={ summary:this.generateSummary(operation, result), diff:this.generateDiff(operation, result), snippet:this.generateContextSnippet(operation, result), statistics:this.generateStatistics(operation, result)};return feedback;}private static generateDiff( operation: EditOperation, result: EditResult ):string{const{ oldContent, newContent, filePath }= result;const changeRatio =this.calculateChangeRatio(oldContent, newContent);if(changeRatio <0.1){return this.generateUnifiedDiff( oldContent, newContent, filePath,{ context:5});}else if(changeRatio <0.5){return this.generateWordDiff( oldContent, newContent, filePath );}else{return this.generateSummaryDiff( oldContent, newContent, filePath );}}private static generateContextSnippet( operation: EditOperation, result: EditResult ):string{const{ newContent, changedRanges }= result;const lines = newContent.split('\\n');const snippets:string[]=[];for(const range of changedRanges){const start = Math.max(0, range.start -5);const end = Math.min(lines.length, range.end +5);const snippet = lines .slice(start, end).map((line, idx)=>{const lineNum = start + idx +1;const isChanged = lineNum >= range.start && lineNum <= range.end;const prefix = isChanged ?'>':' ';return`${prefix}${lineNum}\\t${line}`;}).join('\\n'); snippets.push(snippet);}const combined = snippets.join('\\n...\\n');if(combined.length >1000){return combined.substring(0,1000)+'\\n... (truncated)';}return combined;}private static generateUnifiedDiff( oldContent:string, newContent:string, filePath:string, options: DiffOptions ):string{const oldLines = oldContent.split('\\n');const newLines = newContent.split('\\n');const diff =new MyersDiff(oldLines, newLines);const hunks = diff.getHunks(options.context);const header =[`--- ${filePath}\\t(before edit)`,`+++ ${filePath}\\t(after edit)`,''].join('\\n');const formattedHunks = hunks.map(hunk =>{const range =`@@ -${hunk.oldStart},${hunk.oldLength}`+`+${hunk.newStart},${hunk.newLength} @@`;const lines = hunk.lines.map(line =>{switch(line.type){case'unchanged':return`${line.content}`;case'deleted':return`-${line.content}`;case'added':return`+${line.content}`;}});return[range,...lines].join('\\n');}).join('\\n');return header + formattedHunks;}}
+
+​
+
+File editing must handle numerous edge cases:
+
+TypeScript
+
+Copy
+
+class EdgeCaseHandlers{static handleEmptyFile( operation: EditOperation, content:string): HandlerResult {if(content.trim()===''){if(operation.type ==='edit'){return{ error:'Cannot edit empty file. Use WriteTool to add content.'};}return{ warning:'<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>'};}return{ ok:true};}static async detectBinaryFile( filePath:string, content: Buffer ):Promise<boolean>{for(let i =0; i < Math.min(content.length,8192); i++){if(content[i]===0){return true;}}const binaryExtensions =['.jpg','.png','.gif','.pdf','.zip','.exe','.dll','.so','.dylib'];const ext = path.extname(filePath).toLowerCase();if(binaryExtensions.includes(ext)){return true;}const magicNumbers ={'png':[0x89,0x50,0x4E,0x47],'jpg':[0xFF,0xD8,0xFF],'pdf':[0x25,0x50,0x44,0x46],'zip':[0x50,0x4B,0x03,0x04]};for(const[type, magic]of Object.entries(magicNumbers)){if(this.bufferStartsWith(content, magic)){return true;}}return false;}static async handleSymlink( filePath:string, operation: FileOperation ):Promise<SymlinkResult>{try{const stats =await fs.lstat(filePath);if(!stats.isSymbolicLink()){return{ isSymlink:false};}const target =await fs.readlink(filePath);const resolvedTarget = path.resolve(path.dirname(filePath), target);const targetExists =await fs.access(resolvedTarget).then(()=>true).catch(()=>false);if(!targetExists && operation.type ==='read'){return{ isSymlink:true, error:`Broken symlink: points to non-existent ${target}`};}if(operation.type ==='edit'){return{ isSymlink:true, warning:`This is a symlink to ${target}. Edit will modify the target file.`, target: resolvedTarget };}return{ isSymlink:true, target: resolvedTarget };}catch(error){return{ isSymlink:false};}}static async detectEncoding( filePath:string, buffer: Buffer ):Promise<EncodingInfo>{if(buffer[0]===0xEF&& buffer[1]===0xBB&& buffer[2]===0xBF){return{ encoding:'utf8', hasBOM:true};}if(buffer[0]===0xFF&& buffer[1]===0xFE){return{ encoding:'utf16le', hasBOM:true};}if(buffer[0]===0xFE&& buffer[1]===0xFF){return{ encoding:'utf16be', hasBOM:true};}try{const decoded = buffer.toString('utf8');if(!decoded.includes('\\ufffd')){return{ encoding:'utf8', hasBOM:false};}}catch{}const nullBytes = buffer.filter(b => b ===0).length;const highBytes = buffer.filter(b => b >127).length;if(nullBytes > buffer.length *0.1){return{ encoding:'binary', hasBOM:false};}if(highBytes < buffer.length *0.1){return{ encoding:'ascii', hasBOM:false};}return{ encoding:'utf8', hasBOM:false, warning:'Encoding uncertain, assuming UTF-8'};}}
+
+​
+
+File editing at scale requires careful optimization:
+
+TypeScript
+
+Copy
+
+class FileEditingPerformance{private static chunkCache =new Map<string, ChunkedFile>();static async readLargeFile( filePath:string, options: ReadOptions ):Promise<FileContent>{const stats =await fs.stat(filePath);if(stats.size >10*1024*1024){return this.streamRead(filePath, options);}if(stats.size >1024*1024){return this.chunkedRead(filePath, options);}return this.directRead(filePath, options);}private static async chunkedRead( filePath:string, options: ReadOptions ):Promise<FileContent>{const cached =this.chunkCache.get(filePath);if(cached && cached.mtime ===(await fs.stat(filePath)).mtimeMs){return this.assembleFromChunks(cached, options);}const chunkSize =256*1024;const chunks: Buffer[]=[];const stream =createReadStream(filePath,{ highWaterMark: chunkSize });for await(const chunk of stream){ chunks.push(chunk);}this.chunkCache.set(filePath,{ chunks, mtime:(await fs.stat(filePath)).mtimeMs, encoding:'utf8'});return this.assembleFromChunks({ chunks }, options);}static prepareBatchEdits( edits: Edit[], content:string): PreparedBatch {const positions =new Map<string,number[]>();for(const edit of edits){if(!positions.has(edit.old_string)){ positions.set( edit.old_string,this.findAllPositions(content, edit.old_string));}}const sortedEdits = edits .map(edit =>({ edit, position: positions.get(edit.old_string)![0]})).sort((a, b)=> b.position - a.position);return{ edits: sortedEdits, positions, canApplyInReverse:true};}static*generateStreamingDiff( oldContent:string, newContent:string): Generator<DiffChunk>{const oldLines = oldContent.split('\\n');const newLines = newContent.split('\\n');const windowSize =1000;let oldIndex =0;let newIndex =0;while(oldIndex < oldLines.length || newIndex < newLines.length){const oldWindow = oldLines.slice(oldIndex, oldIndex + windowSize);const newWindow = newLines.slice(newIndex, newIndex + windowSize);const diff =this.computeWindowDiff( oldWindow, newWindow, oldIndex, newIndex );yield diff; oldIndex += diff.oldConsumed; newIndex += diff.newConsumed;}}}
+
+​
+
+Performance Characteristics:
+
+File Size Operation Method Time Memory
+<100KB Read Direct<5ms O(n)
+100KB-1MB Read Direct 5-20ms O(n)
+1-10MB Read Chunked 20-100ms O(chunk)
+>10MB Read Streaming 100ms+O(1)
+Any Edit (single)In-memory<10ms O(n)
+Any Edit (multi)Sequential<50ms O(n)
+Any Write Direct<20ms O(n)
+
+Understanding common failures helps build robust editing:
+
+TypeScript
+
+Copy
+
+class FailureRecovery{static async handleExternalModification( filePath:string, cachedState: FileState, operation: EditOperation ):Promise<RecoveryStrategy>{const currentContent =await fs.readFile(filePath,'utf8');const currentStats =await fs.stat(filePath);const mergeResult =await this.attemptThreeWayMerge( cachedState.content, operation.newContent, currentContent );if(mergeResult.success &&!mergeResult.conflicts){return{ strategy:'auto_merge', content: mergeResult.merged, warning:'File was modified externally. Changes have been merged.'};}if(mergeResult.conflicts){return{ strategy:'conflict_markers', content: mergeResult.conflictMarked, error:'Merge conflicts detected. Manual resolution required.', conflicts: mergeResult.conflicts };}return{ strategy:'user_decision', error:'File modified externally', options:['Overwrite external changes','Abort edit','Read file again'], diff:this.generateDiff(cachedState.content, currentContent)};}static async handleEncodingError( filePath:string, error: Error, content:string):Promise<RecoveryStrategy>{const encodings =['utf8','latin1','utf16le'];for(const encoding of encodings){try{const buffer = Buffer.from(content, encoding as any);await fs.writeFile(filePath +'.test', buffer);await fs.unlink(filePath +'.test');return{ strategy:'alternate_encoding', encoding, warning:`Using ${encoding} encoding instead of UTF-8`};}catch{}}return{ strategy:'binary_write', warning:'Treating as binary file', content: Buffer.from(content,'binary')};}static async handleDiskSpaceError( filePath:string, requiredBytes:number):Promise<RecoveryStrategy>{const diskInfo =await this.getDiskInfo(path.dirname(filePath));if(diskInfo.available< requiredBytes){const suggestions =await this.analyzeDiskUsage(path.dirname(filePath));return{ strategy:'free_space', error:`Insufficient disk space. Need ${this.formatBytes(requiredBytes)}, `+`have ${this.formatBytes(diskInfo.available)}`, suggestions: suggestions.map(s =>({ path: s.path, size:this.formatBytes(s.size), type: s.type }))};}return{ strategy:'quota_check', error:'Write failed despite apparent free space. Check disk quotas.', command:`quota -v ${process.env.USER}`};}static async recoverPartialWrite( filePath:string, expectedSize:number):Promise<RecoveryResult>{try{const stats =await fs.stat(filePath);if(stats.size ===0){const backupPath = filePath +'.backup';if(await fs.access(backupPath).then(()=>true).catch(()=>false)){await fs.rename(backupPath, filePath);return{ recovered:true, method:'backup_restore'};}}if(stats.size < expectedSize){const tempPath = filePath +'.tmp';if(await fs.access(tempPath).then(()=>true).catch(()=>false)){const tempStats =await fs.stat(tempPath);if(tempStats.size === expectedSize){await fs.rename(tempPath, filePath);return{ recovered:true, method:'temp_file_restore'};}}}return{ recovered:false, partialSize: stats.size, expectedSize };}catch(error){return{ recovered:false, error: error.message };}}}
+
+​
