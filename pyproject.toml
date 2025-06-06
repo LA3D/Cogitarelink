@@ -40,9 +40,10 @@ dev = [
 ]
 
 [project.scripts]
-cl_discover = "cogitarelink.cli.discover:main"
-cl_sparql = "cogitarelink.cli.sparql:main"
-cl_materialize = "cogitarelink.cli.materialize:main"
+cl_discover = "cogitarelink.cli.cl_discover:discover"
+cl_sparql = "cogitarelink.cli.cl_sparql:sparql_query"
+cl_materialize = "cogitarelink.cli.cl_materialize:materialize"
+cl_wikidata = "cogitarelink.cli.cl_wikidata:wikidata"
 cl_explain = "cogitarelink.cli.explain:main"
 cl_validate = "cogitarelink.cli.validate:main"
 cl_query_memory = "cogitarelink.cli.query_memory:main"

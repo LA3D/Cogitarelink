@@ -1,0 +1,188 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix schema: <https://schema.org/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix ex: <https://w3id.org/cogitarelink/rdr#> .
+
+#################################################################
+# RDFS + OWL‑RL (core) + schema.org domainIncludes/rangeIncludes
+# Forward‑chaining rules for the CogitareLink sandbox.
+#
+# ✔  Pure SPARQL CONSTRUCT (SHACL Advanced) – no Python logic.
+# ✔  Generates new triples and provenance activities.
+# ✔  Gives short obqc‑style expl notes that LLM can read if needed.
+#
+# NOTES ON SEMANTICS
+#
+# 1. domainIncludes / rangeIncludes are treated as *hints*.
+#    They materialise rdf:type  triples (like rdfs:domain/range) but
+#    also attach ex:confidence "0.6"^^xsd:decimal so that downstream
+#    agents can rank them lower.
+# 2. SubClassOf / SubPropertyOf closure limited to depth‑1 per pass
+#    to avoid infinite loops; sandbox iterates until fix‑point.
+# 3. owl:inverseOf is symmetric; inverse property inferred once.
+# 4. Each rule emits prov:wasGeneratedBy _:act – downstream can cite.
+#################################################################
+
+###############
+# Root shape  #
+###############
+ex:RDRRuleSet a sh:NodeShape ;
+    rdfs:comment "RDFS/OWL‑RL + schema.org forward‑chaining rules" ;
+    sh:rule ex:SC_Transitive , ex:SP_Transitive ,
+            ex:DomainEnt , ex:RangeEnt ,
+            ex:SchemaDomainEnt , ex:SchemaRangeEnt ,
+            ex:InverseEnt .
+
+#################################################################
+# Rule: rdfs:subClassOf transitivity (one‑step)
+#################################################################
+ex:SC_Transitive a sh:SPARQLRule ;
+    rdfs:comment "C1 ⊑ C2, C2 ⊑ C3 ⇒ C1 ⊑ C3" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+        CONSTRUCT {
+            ?c1 rdfs:subClassOf ?c3 .
+            _:act a prov:Activity ; prov:used rdfs:subClassOf .
+            ?c1 rdfs:subClassOf ?c3 ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?c1 rdfs:subClassOf ?c2 .
+            ?c2 rdfs:subClassOf ?c3 .
+            FILTER NOT EXISTS { ?c1 rdfs:subClassOf ?c3 } .
+        }
+    """ .
+
+#################################################################
+# Rule: rdfs:subPropertyOf transitivity (one‑step)
+#################################################################
+ex:SP_Transitive a sh:SPARQLRule ;
+    rdfs:comment "P1 ⊑ P2, P2 ⊑ P3 ⇒ P1 ⊑ P3" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+        CONSTRUCT {
+            ?p1 rdfs:subPropertyOf ?p3 .
+            _:act a prov:Activity ; prov:used rdfs:subPropertyOf .
+            ?p1 rdfs:subPropertyOf ?p3 ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?p1 rdfs:subPropertyOf ?p2 .
+            ?p2 rdfs:subPropertyOf ?p3 .
+            FILTER NOT EXISTS { ?p1 rdfs:subPropertyOf ?p3 } .
+        }
+    """ .
+
+#################################################################
+# Rule: rdfs:domain entailment
+#################################################################
+ex:DomainEnt a sh:SPARQLRule ;
+    rdfs:comment "P rdfs:domain D, S P O ⇒ S a D" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+        CONSTRUCT {
+            ?s a ?D .
+            _:act a prov:Activity ; prov:used ?p .
+            ?s a ?D ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p rdfs:domain ?D .
+            FILTER NOT EXISTS { ?s a ?D } .
+        }
+    """ .
+
+#################################################################
+# Rule: rdfs:range entailment
+#################################################################
+ex:RangeEnt a sh:SPARQLRule ;
+    rdfs:comment "P rdfs:range R, S P O ⇒ O a R" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+        CONSTRUCT {
+            ?o a ?R .
+            _:act a prov:Activity ; prov:used ?p .
+            ?o a ?R ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p rdfs:range ?R .
+            FILTER NOT EXISTS { ?o a ?R } .
+        }
+    """ .
+
+#################################################################
+# Rule: schema:domainIncludes entailment (confidence 0.6)
+#################################################################
+ex:SchemaDomainEnt a sh:SPARQLRule ;
+    rdfs:comment "P schema:domainIncludes D, S P O ⇒ S a D (soft)" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX schema: <https://schema.org/>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+        CONSTRUCT {
+            ?s a ?D .
+            ?s schema:confidence "0.6"^^xsd:decimal .
+            _:act a prov:Activity ; prov:used ?p .
+            ?s a ?D ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p schema:domainIncludes ?D .
+            FILTER NOT EXISTS { ?s a ?D } .
+        }
+    """ .
+
+#################################################################
+# Rule: schema:rangeIncludes entailment (confidence 0.6)
+#################################################################
+ex:SchemaRangeEnt a sh:SPARQLRule ;
+    rdfs:comment "P schema:rangeIncludes R, S P O ⇒ O a R (soft)" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX schema: <https://schema.org/>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+        CONSTRUCT {
+            ?o a ?R .
+            ?o schema:confidence "0.6"^^xsd:decimal .
+            _:act a prov:Activity ; prov:used ?p .
+            ?o a ?R ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p schema:rangeIncludes ?R .
+            FILTER NOT EXISTS { ?o a ?R } .
+        }
+    """ .
+
+#################################################################
+# Rule: owl:inverseOf entailment
+#################################################################
+ex:InverseEnt a sh:SPARQLRule ;
+    rdfs:comment "P owl:inverseOf Q, S P O ⇒ O Q S" ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+
+        CONSTRUCT {
+            ?o ?q ?s .
+            _:act a prov:Activity ; prov:used ?p .
+            ?o ?q ?s ; prov:wasDerivedFrom _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p owl:inverseOf ?q .
+            FILTER NOT EXISTS { ?o ?q ?s } .
+        }
+    """ .

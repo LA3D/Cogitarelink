@@ -1,8 +1,14 @@
-"""Advanced vocabulary management.
+"""Vocabulary management for CogitareLink.
 
-Provides sophisticated vocabulary handling:
-- Registry: Dynamic vocab registry with versioning and aliases
-- Composer: Context composition with JSON-LD 1.1 features
-- Collision: Multi-strategy conflict resolution
-- Alignment: Cross-vocabulary property alignment with confidence
+Multi-vocabulary JSON-LD context composition with collision detection.
 """
+
+from .registry import registry, VocabEntry, ContextBlock, Versions
+from .composer import composer, Composer  
+from .collision import resolver, Strategy, Plan
+
+__all__ = [
+    'registry', 'VocabEntry', 'ContextBlock', 'Versions',
+    'composer', 'Composer',
+    'resolver', 'Strategy', 'Plan'
+]

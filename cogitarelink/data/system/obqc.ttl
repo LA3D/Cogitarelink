@@ -1,0 +1,167 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix obqc: <https://w3id.org/obqc#> .
+@prefix schema: <https://schema.org/> .
+
+#################################################################
+# OBQC – Ontology‑Based / Schema.org Query Check rule set
+# (Allemang & Sequeda pattern, extended for schema:domainIncludes
+#  and schema:rangeIncludes)
+#
+# Each SPARQLRule CONSTRUCTs diagnostics rather than failing.
+# The LLM can use obqc:expl text to auto‑repair its query.
+#################################################################
+
+#################################################################
+# Diagnostic classes
+#################################################################
+obqc:DomainViolation                a rdfs:Class ; rdfs:comment "Subject is not typed according to rdfs:domain or schema:domainIncludes of the used property." .
+obqc:RangeViolation                 a rdfs:Class ; rdfs:comment "Object is not typed according to rdfs:range or schema:rangeIncludes of the used property." .
+obqc:MultipleDomainViolation        a rdfs:Class ; rdfs:comment "Property has >1 rdfs:domain / schema:domainIncludes; query must constrain subject types." .
+obqc:MultipleRangeViolation         a rdfs:Class ; rdfs:comment "Property has >1 rdfs:range / schema:rangeIncludes; query must constrain object types." .
+obqc:PropertyNotDefinedViolation    a rdfs:Class ; rdfs:comment "Property used in the query is not defined in ontology or schema.org." .
+
+#################################################################
+# Root shape executing all rules
+#################################################################
+obqc:AllTriplesShape a sh:NodeShape ;
+    rdfs:comment "Root shape that executes OBQC diagnostics (RDFS + Schema.org)." ;
+    sh:rule obqc:DomainRule , obqc:RangeRule ,
+            obqc:MultipleDomainRule , obqc:MultipleRangeRule ,
+            obqc:PropertyDefinedRule .
+
+#################################################################
+# Rule 1 – Domain check (rdfs:domain | schema:domainIncludes)
+#################################################################
+obqc:DomainRule a sh:SPARQLRule ;
+    rdfs:comment "Report DomainViolation when subject is not typed per domain/domainIncludes." ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX obqc: <https://w3id.org/obqc#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX schema: <https://schema.org/>
+
+        CONSTRUCT {
+            _:act a prov:Activity ; prov:used ?p .
+            _:violation a obqc:DomainViolation ;
+                        obqc:property ?p ; obqc:subject ?s ; obqc:expectedDomain ?D ;
+                        obqc:expl CONCAT("Subject ", STR(?s), " is not typed as ", STR(?D),
+                                         " which is the declared domain of ", STR(?p), ".") ;
+                        prov:wasGeneratedBy _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p (rdfs:domain|schema:domainIncludes) ?D .
+            FILTER NOT EXISTS { ?s a ?D } .
+        }
+    """ .
+
+#################################################################
+# Rule 2 – Range check (rdfs:range | schema:rangeIncludes)
+#################################################################
+obqc:RangeRule a sh:SPARQLRule ;
+    rdfs:comment "Report RangeViolation when object is not typed per range/rangeIncludes." ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX obqc: <https://w3id.org/obqc#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX schema: <https://schema.org/>
+
+        CONSTRUCT {
+            _:act a prov:Activity ; prov:used ?p .
+            _:violation a obqc:RangeViolation ;
+                        obqc:property ?p ; obqc:object ?o ; obqc:expectedRange ?R ;
+                        obqc:expl CONCAT("Object ", STR(?o), " is not typed as ", STR(?R),
+                                         " which is the declared range of ", STR(?p), ".") ;
+                        prov:wasGeneratedBy _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            ?p (rdfs:range|schema:rangeIncludes) ?R .
+            FILTER NOT EXISTS { ?o a ?R } .
+        }
+    """ .
+
+#################################################################
+# Rule 3 – Multiple domain declarations
+#################################################################
+obqc:MultipleDomainRule a sh:SPARQLRule ;
+    rdfs:comment "Warn when property has multiple domain/domainIncludes terms." ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX obqc: <https://w3id.org/obqc#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX schema: <https://schema.org/>
+
+        CONSTRUCT {
+            _:act a prov:Activity ; prov:used ?p .
+            _:violation a obqc:MultipleDomainViolation ;
+                        obqc:property ?p ;
+                        obqc:expl CONCAT("Property ", STR(?p), " has multiple domain declarations; specify subject type.") ;
+                        prov:wasGeneratedBy _:act .
+        }
+        WHERE {
+            {
+                SELECT ?p (COUNT(?D) AS ?dcount)
+                WHERE { ?p (rdfs:domain|schema:domainIncludes) ?D }
+                GROUP BY ?p HAVING (?dcount > 1)
+            }
+        }
+    """ .
+
+#################################################################
+# Rule 4 – Multiple range declarations
+#################################################################
+obqc:MultipleRangeRule a sh:SPARQLRule ;
+    rdfs:comment "Warn when property has multiple range/rangeIncludes terms." ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX obqc: <https://w3id.org/obqc#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX schema: <https://schema.org/>
+
+        CONSTRUCT {
+            _:act a prov:Activity ; prov:used ?p .
+            _:violation a obqc:MultipleRangeViolation ;
+                        obqc:property ?p ;
+                        obqc:expl CONCAT("Property ", STR(?p), " has multiple range declarations; specify object type.") ;
+                        prov:wasGeneratedBy _:act .
+        }
+        WHERE {
+            {
+                SELECT ?p (COUNT(?R) AS ?rcount)
+                WHERE { ?p (rdfs:range|schema:rangeIncludes) ?R }
+                GROUP BY ?p HAVING (?rcount > 1)
+            }
+        }
+    """ .
+
+#################################################################
+# Rule 5 – Property defined in ontology or schema.org
+#################################################################
+obqc:PropertyDefinedRule a sh:SPARQLRule ;
+    rdfs:comment "Detects predicates missing from ontology & not schema:Property." ;
+    sh:construct """
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX obqc: <https://w3id.org/obqc#>
+        PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        PREFIX schema: <https://schema.org/>
+
+        CONSTRUCT {
+            _:act a prov:Activity ; prov:used ?p .
+            _:violation a obqc:PropertyNotDefinedViolation ;
+                        obqc:property ?p ;
+                        obqc:expl CONCAT("Property ", STR(?p), " is not defined in ontology or as schema:Property.") ;
+                        prov:wasGeneratedBy _:act .
+        }
+        WHERE {
+            ?s ?p ?o .
+            FILTER NOT EXISTS { ?p a owl:ObjectProperty } .
+            FILTER NOT EXISTS { ?p a rdf:Property } .
+            FILTER NOT EXISTS { ?p a schema:Property } .
+        }
+    """ .
