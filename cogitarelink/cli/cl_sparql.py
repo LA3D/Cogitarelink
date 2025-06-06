@@ -113,9 +113,10 @@ async def _sparql_async(
             return
         
         # Step 2: Discovery-first guardrails
+        discovery_context = None
         if discover_first:
             discovery_context = await _ensure_schema_discovery(
-                validation_result, context_id, domains
+                validation_result, context_id, domains, endpoint
             )
             if discovery_context["requires_discovery"]:
                 response = _build_discovery_required_response(
@@ -131,7 +132,7 @@ async def _sparql_async(
         
         # Step 4: Build comprehensive agent response
         response = await _build_sparql_response(
-            query_result, validation_result, response_level, context_id
+            query_result, validation_result, response_level, context_id, discovery_context
         )
         
         # Step 5: Apply response management
@@ -231,7 +232,8 @@ async def _validate_sparql_query(query: str, domains: List[str]) -> Dict[str, An
 async def _ensure_schema_discovery(
     validation_result: Dict[str, Any],
     context_id: Optional[str],
-    domains: List[str]
+    domains: List[str],
+    endpoint: str = "wikidata"
 ) -> Dict[str, Any]:
     """Ensure schema discovery for entities in query (discovery-first guardrails)."""
     
@@ -239,33 +241,94 @@ async def _ensure_schema_discovery(
         "requires_discovery": False,
         "undiscovered_entities": [],
         "discovery_suggestions": [],
-        "context_available": context_id is not None
+        "context_available": context_id is not None,
+        "is_wikidata_query": False,
+        "wikidata_guidance": [],
+        "endpoint": endpoint
     }
     
-    # Check if entities need discovery
-    for entity in validation_result["extracted_entities"]:
-        if entity.startswith("http"):
-            # Full URI - check if we have schema information
-            try:
-                # Try to resolve via registry
-                registry.resolve(entity)
-            except KeyError:
-                discovery_context["undiscovered_entities"].append(entity)
-                discovery_context["requires_discovery"] = True
-        
-        elif ":" in entity:
-            # Prefixed entity - check if prefix is known
-            prefix = entity.split(":")[0]
-            if prefix not in validation_result["extracted_prefixes"]:
-                discovery_context["undiscovered_entities"].append(entity)
-                discovery_context["requires_discovery"] = True
+    # Check if this is a Wikidata query (exempt from discovery guardrails)
+    extracted_prefixes = validation_result.get("extracted_prefixes", {})
+    wikidata_indicators = ["wd:", "wdt:", "wikibase:", "bd:", "p:", "ps:", "pq:", "pr:"]
     
-    # Generate discovery suggestions
-    if discovery_context["requires_discovery"]:
-        for entity in discovery_context["undiscovered_entities"]:
-            discovery_context["discovery_suggestions"].append(
-                f"cl_discover '{entity}' --domains {' '.join(domains or ['general'])}"
-            )
+    # Detect Wikidata patterns - only if endpoint is explicitly wikidata or auto-detected
+    # Don't let Wikidata prefixes bypass discovery for explicitly non-Wikidata endpoints
+    wikidata_detected = (
+        endpoint == "wikidata" or 
+        (endpoint is None and any(prefix in str(extracted_prefixes) for prefix in wikidata_indicators)) or
+        (endpoint is None and any(indicator in entity for entity in validation_result["extracted_entities"] 
+            for indicator in wikidata_indicators))
+    )
+    
+    if wikidata_detected:
+        discovery_context["is_wikidata_query"] = True
+        discovery_context["wikidata_guidance"] = [
+            "🏛️ WIKIDATA QUERY: Properties (P123) define the schema, not external ontologies",
+            "🔍 PROPERTY DISCOVERY: Use DESCRIBE wd:P352 to learn about external identifier properties",
+            "🔗 CROSSWALK PATTERN: External identifier properties contain rich endpoint metadata",
+            "📊 ENTITY EXPLORATION: Use DESCRIBE wd:Q12345 to see all properties and external IDs",
+            "🌐 FOLLOW YOUR NOSE: External identifiers lead to other SPARQL endpoints requiring discovery"
+        ]
+        # No discovery required for Wikidata queries
+        return discovery_context
+    
+    # Global state for tracking discovered endpoints (Claude Code style)
+    # Load discovered endpoints from cache
+    try:
+        from pathlib import Path
+        import json
+        discovery_cache_file = Path.home() / ".cogitarelink_discovered_endpoints.json"
+        discovered_endpoints = set()
+        
+        if discovery_cache_file.exists():
+            with open(discovery_cache_file, 'r') as f:
+                endpoints = json.load(f)
+                discovered_endpoints = set(endpoints.get("discovered", []))
+    except Exception:
+        discovered_endpoints = set()
+    
+    # Guardrail 1: Discovery prerequisite (like Read-before-Edit in Claude Code)
+    if endpoint != "wikidata" and endpoint not in discovered_endpoints:
+        discovery_context["requires_discovery"] = True
+        discovery_context["discovery_suggestions"] = [
+            f"cl_discover --endpoint {endpoint}",
+            "Schema discovery provides vocabulary context needed for effective queries",
+            "This prevents common prefix and syntax errors"
+        ]
+        return discovery_context
+    
+    # Guardrail 2: Vocabulary validation (preventing common errors)
+    endpoint_vocabularies = {
+        "wikidata": ["wd:", "wdt:", "p:", "ps:", "pq:", "rdfs:", "wikibase:", "bd:"],
+        "wikipathways": ["wp:", "dc:", "dcterms:", "foaf:", "rdfs:"],
+        "uniprot": ["up:", "taxon:", "rdfs:", "skos:"],
+        "idsm": ["rdfs:", "owl:", "skos:"],
+        "rhea": ["rh:", "rdfs:", "owl:"]
+    }
+    
+    if endpoint in endpoint_vocabularies:
+        expected_prefixes = endpoint_vocabularies[endpoint]
+        query_prefixes = [prefix for prefix in extracted_prefixes.keys()]
+        
+        # Check for wrong prefixes
+        wrong_prefixes = []
+        for prefix in query_prefixes:
+            prefix_with_colon = f"{prefix}:"
+            if prefix_with_colon not in expected_prefixes and prefix not in ["SELECT", "WHERE", "FILTER", "OPTIONAL"]:
+                wrong_prefixes.append(prefix_with_colon)
+        
+        if wrong_prefixes:
+            discovery_context["requires_discovery"] = True
+            discovery_context["vocabulary_mismatch"] = {
+                "wrong_prefixes": wrong_prefixes,
+                "expected_prefixes": expected_prefixes,
+                "suggestions": [
+                    f"Use {', '.join(expected_prefixes)} for {endpoint}",
+                    f"Run 'cl_discover --endpoint {endpoint}' to see vocabulary examples",
+                    "Check endpoint-specific query patterns"
+                ]
+            }
+            return discovery_context
     
     return discovery_context
 
@@ -385,13 +448,17 @@ def _mock_sparql_results(query: str, max_results: int, validation_result: Dict[s
 def _determine_sparql_endpoint(endpoint: Optional[str], validation_result: Dict[str, Any]) -> str:
     """Determine which SPARQL endpoint to use based on query analysis."""
     
+    # Endpoint aliases mapping  
+    endpoint_urls = {
+        "wikidata": "https://query.wikidata.org/sparql",
+        "uniprot": "https://sparql.uniprot.org/sparql", 
+        "idsm": "https://idsm.elixir-czech.cz/sparql/endpoint/idsm",
+        "wikipathways": "https://sparql.wikipathways.org/sparql",
+        "rhea": "https://sparql.rhea-db.org/sparql"
+    }
+    
     # If endpoint explicitly provided, use it
     if endpoint:
-        endpoint_urls = {
-            "wikidata": "https://query.wikidata.org/sparql",
-            "uniprot": "https://sparql.uniprot.org/sparql", 
-            "idsm": "https://idsm.elixir-czech.cz/sparql/endpoint/idsm"
-        }
         return endpoint_urls.get(endpoint, endpoint)
     
     # Auto-detect endpoint from query content
@@ -401,15 +468,23 @@ def _determine_sparql_endpoint(endpoint: Optional[str], validation_result: Dict[
     # Check for Wikidata patterns
     wikidata_indicators = ["wd:", "wdt:", "wikibase:", "bd:", "p:", "ps:", "pq:", "pr:"]
     if any(prefix in str(extracted_prefixes) for prefix in wikidata_indicators):
-        return "https://query.wikidata.org/sparql"
+        return endpoint_urls["wikidata"]
     
+    # Check for UniProt patterns
+    if any(prefix in str(extracted_prefixes) for prefix in ["up:", "taxon:"]):
+        return endpoint_urls["uniprot"]
+    
+    # Check for WikiPathways patterns
+    if any(prefix in str(extracted_prefixes) for prefix in ["wp:", "dc:", "dcterms:"]):
+        return endpoint_urls["wikipathways"]
+        
     # Check for biology domain
     if "biology" in query_domains:
         # Default to Wikidata for biological queries (has extensive bio data)
-        return "https://query.wikidata.org/sparql"
+        return endpoint_urls["wikidata"]
     
     # Default to Wikidata (most comprehensive)
-    return "https://query.wikidata.org/sparql"
+    return endpoint_urls["wikidata"]
 
 def _enhance_query_with_prefixes(query: str, endpoint: str) -> str:
     """Add common prefixes to query if not already present."""
@@ -495,7 +570,8 @@ async def _build_sparql_response(
     query_result: Dict[str, Any],
     validation_result: Dict[str, Any], 
     response_level: ResponseLevel,
-    context_id: Optional[str]
+    context_id: Optional[str],
+    discovery_context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Build comprehensive agent-friendly SPARQL response."""
     
@@ -588,6 +664,7 @@ async def _build_sparql_response(
                 "Use entity signatures for result verification",
                 "Consider expanding queries for richer context"
             ],
+            "wikidata_intelligence": discovery_context.get("wikidata_guidance", []) if discovery_context and discovery_context.get("is_wikidata_query") else [],
             "performance_guidance": {
                 "complexity_assessment": "low" if validation_result["complexity_score"] < 3 else 
                                        "medium" if validation_result["complexity_score"] < 7 else "high",
@@ -652,21 +729,37 @@ def _build_discovery_required_response(
 ) -> Dict[str, Any]:
     """Build discovery-first guardrail response."""
     
+    # Check if this is a vocabulary mismatch vs. general discovery requirement
+    if "vocabulary_mismatch" in discovery_context:
+        vocab_error = discovery_context["vocabulary_mismatch"]
+        return {
+            "success": False,
+            "error": {
+                "code": "VOCABULARY_MISMATCH",
+                "message": f"Query uses wrong vocabulary prefixes for {discovery_context['endpoint']}",
+                "wrong_prefixes": vocab_error["wrong_prefixes"],
+                "expected_prefixes": vocab_error["expected_prefixes"],
+                "suggestions": vocab_error["suggestions"]
+            }
+        }
+    
+    # General discovery requirement
     return {
         "success": False,
         "error": {
             "code": "DISCOVERY_REQUIRED",
-            "message": "Discovery-first guardrail: Schema discovery required before querying",
-            "undiscovered_entities": discovery_context["undiscovered_entities"],
-            "required_actions": discovery_context["discovery_suggestions"]
+            "message": f"Endpoint '{discovery_context['endpoint']}' must be discovered before querying",
+            "required_action": f"cl_discover --endpoint {discovery_context['endpoint']}",
+            "reasoning": "Schema discovery provides vocabulary context needed for effective queries",
+            "suggestions": discovery_context["discovery_suggestions"]
         },
         "claude_guidance": {
             "guardrail_explanation": "CogitareLink enforces discovery-first to prevent vocabulary errors",
             "discovery_workflow": [
-                "1. Discover schemas for unknown entities/vocabularies",
+                "1. Discover endpoint schema and vocabularies",
                 "2. Validate vocabulary compatibility", 
                 "3. Retry SPARQL query with discovered context",
-                "4. Materialize results for semantic processing"
+                "4. Follow Chain-of-Thought patterns for biological research"
             ],
             "next_actions": discovery_context["discovery_suggestions"],
             "reasoning": [

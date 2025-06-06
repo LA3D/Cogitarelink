@@ -47,7 +47,8 @@ cl_wikidata = "cogitarelink.cli.cl_wikidata:wikidata"
 cl_explain = "cogitarelink.cli.explain:main"
 cl_validate = "cogitarelink.cli.validate:main"
 cl_query_memory = "cogitarelink.cli.query_memory:main"
-cl_resolve = "cogitarelink.cli.resolve:main"
+cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
+cl_ontfetch = "cogitarelink.cli.cl_ontfetch:ontfetch"
 cl_orchestrate = "cogitarelink.cli.orchestrate:main"
 
 [build-system]

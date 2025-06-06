@@ -15,5 +15,7 @@ from .cl_discover import discover
 from .cl_sparql import sparql_query
 from .cl_materialize import materialize
 from .cl_wikidata import wikidata
+from .cl_resolve import resolve
+from .cl_ontfetch import ontfetch
 
-__all__ = ['discover', 'sparql_query', 'materialize', 'wikidata']
+__all__ = ['discover', 'sparql_query', 'materialize', 'wikidata', 'resolve', 'ontfetch']
