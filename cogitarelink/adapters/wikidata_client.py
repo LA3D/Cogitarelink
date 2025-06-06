@@ -159,10 +159,16 @@ class WikidataClient:
         entities = []
         
         for item in search_results.get('search', []):
+            # Validate that we have a proper entity ID
+            entity_id = item.get('id')
+            if not entity_id or not (entity_id.startswith('Q') or entity_id.startswith('P')):
+                log.warning(f"Skipping search result with invalid/missing ID: {item}")
+                continue
+                
             content = {
                 "@type": "WikidataEntity",
-                "@id": item.get('concepturi', f"http://www.wikidata.org/entity/{item.get('id')}"),
-                "identifier": item.get('id'),
+                "@id": item.get('concepturi', f"http://www.wikidata.org/entity/{entity_id}"),
+                "identifier": entity_id,
                 "name": item.get('label', 'No label'),
                 "description": item.get('description', 'No description'),
                 "wikidataUrl": item.get('url', ''),
@@ -190,6 +196,11 @@ class WikidataClient:
         if vocab is None:
             vocab = ["wikidata", "schema.org"]
             
+        # Validate entity ID format
+        if not entity_id or not (entity_id.startswith('Q') or entity_id.startswith('P')):
+            log.error(f"Invalid entity ID format: {entity_id}")
+            return None
+            
         try:
             content = {
                 "@type": "WikidataEntity",
@@ -209,10 +220,12 @@ class WikidataClient:
                     title = wiki_data['title'].replace(' ', '_')
                     content['wikipediaUrl'] = f"https://en.wikipedia.org/wiki/{title}"
             
-            # Process claims into structured properties
+            # Process claims into structured properties (matches reference implementation)
             if 'claims' in entity_data:
                 content['claims'] = {}
-                for prop_id, claim_list in entity_data['claims'].items():
+                claims = entity_data['claims']
+                
+                for prop_id, claim_list in claims.items():
                     values = []
                     for claim in claim_list:
                         value = self._extract_claim_value(claim)
@@ -221,6 +234,7 @@ class WikidataClient:
                                 'value': value,
                                 'rank': claim.get('rank', 'normal')
                             })
+                    
                     if values:
                         content['claims'][prop_id] = values
             
@@ -233,7 +247,7 @@ class WikidataClient:
             return None
     
     def _extract_claim_value(self, claim: Dict[str, Any]) -> Optional[str]:
-        """Extract human-readable value from a Wikidata claim."""
+        """Extract human-readable value from a Wikidata claim (matches reference implementation)."""
         if 'mainsnak' not in claim or 'datavalue' not in claim['mainsnak']:
             return None
         

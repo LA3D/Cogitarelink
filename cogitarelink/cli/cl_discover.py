@@ -12,13 +12,15 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from typing import Optional, List
+import time
+from typing import Optional, List, Dict, Any
 
 import click
 
 from ..intelligence.discovery_engine import discovery_engine, DiscoveryResult
 from ..intelligence.response_manager import response_manager, ResponseLevel
 from ..intelligence.guidance_generator import guidance_generator, GuidanceContext, DomainType
+from ..intelligence.schema_discovery import schema_discovery_engine
 from ..core.entity import Entity
 from ..core.debug import get_logger
 
@@ -27,6 +29,9 @@ log = get_logger("cl_discover")
 @click.command()
 @click.argument('resource_identifier', required=True)
 @click.option('--domains', multiple=True, help='Domain hints (biology, semantic_web, geospatial)')
+@click.option('--endpoint', help='Discover SPARQL endpoint schema instead of resource')
+@click.option('--method', default='auto', type=click.Choice(['auto', 'introspection', 'void', 'documentation']),
+              help='Schema discovery method for endpoints')
 @click.option('--context-id', help='Context ID for tool chaining')
 @click.option('--enhance', is_flag=True, help='Use enhanced discovery for richer metadata')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
@@ -37,6 +42,8 @@ log = get_logger("cl_discover")
 def discover(
     resource_identifier: str,
     domains: List[str],
+    endpoint: Optional[str],
+    method: str,
     context_id: Optional[str],
     enhance: bool,
     level: str,
@@ -44,31 +51,46 @@ def discover(
     output_format: str
 ):
     """
-    Discover metadata about a scientific resource with agent intelligence.
+    Discover metadata about a scientific resource or SPARQL endpoint schema.
     
-    Examples:
+    Resource Discovery Examples:
         cl_discover "P01308" --domains biology
         cl_discover "insulin" --domains biology --enhance --materialize
         cl_discover "http://schema.org/Protein" --level full
         cl_discover "UniProt:P01308" --context-id ctx_abc123 --materialize
+        
+    Endpoint Schema Discovery Examples:
+        cl_discover wikidata --endpoint wikidata --method documentation
+        cl_discover wikipathways --endpoint wikipathways --method introspection
+        cl_discover uniprot --endpoint uniprot --method auto
     """
     asyncio.run(_discover_async(
-        resource_identifier, domains, context_id, enhance, 
+        resource_identifier, domains, endpoint, method, context_id, enhance, 
         level, materialize, output_format
     ))
 
 async def _discover_async(
     resource_identifier: str,
     domains: List[str],
+    endpoint: Optional[str],
+    method: str,
     context_id: Optional[str],
     enhance: bool,
     level: str,
     materialize: bool,
     output_format: str
 ):
-    """Async implementation of discovery with full intelligence integration."""
+    """Async implementation of discovery with endpoint schema and resource intelligence."""
     
     try:
+        # Check if this is endpoint schema discovery
+        if endpoint:
+            log.info(f"Discovering schema for endpoint: {endpoint} using method: {method}")
+            await _endpoint_schema_discovery(
+                endpoint, method, level, output_format
+            )
+            return
+        
         log.info(f"Discovering resource: {resource_identifier}")
         
         # Convert level string to ResponseLevel enum
@@ -309,6 +331,150 @@ def _print_human_readable(response: dict, discovery_result: DiscoveryResult):
         print(f"❌ Discovery failed: {error['message']}")
         if "recovery_plan" in error:
             print(f"💡 Try: {error['recovery_plan']['reasoning']}")
+
+
+async def _endpoint_schema_discovery(
+    endpoint: str,
+    method: str,
+    level: str,
+    output_format: str
+):
+    """Discover SPARQL endpoint schema with agent intelligence."""
+    
+    start_time = time.time()
+    
+    try:
+        log.info(f"Starting schema discovery for {endpoint}")
+        
+        # Execute schema discovery
+        schema = await schema_discovery_engine.discover_schema(
+            endpoint=endpoint,
+            method=method,
+            include_examples=True
+        )
+        
+        # Generate agent guidance
+        guidance = schema_discovery_engine.generate_agent_guidance(schema)
+        
+        # Build comprehensive response
+        execution_time = int((time.time() - start_time) * 1000)
+        
+        response = {
+            "success": True,
+            "data": {
+                "endpoint": schema.endpoint,
+                "schema_info": {
+                    "classes": schema.classes,
+                    "properties": schema.properties,
+                    "prefixes": schema.prefixes,
+                    "statistics": schema.statistics
+                },
+                "discovery_method": schema.discovery_method,
+                "confidence_score": schema.confidence_score,
+                "examples": schema.examples
+            },
+            "metadata": {
+                "execution_time_ms": execution_time,
+                "classes_discovered": len(schema.classes),
+                "properties_discovered": len(schema.properties),
+                "prefixes_available": len(schema.prefixes),
+                "examples_generated": len(schema.examples)
+            },
+            "guidance": guidance,
+            "suggestions": {
+                "immediate_next_steps": [
+                    f"Try example queries against {schema.endpoint}",
+                    f"Use discovered prefixes in custom queries",
+                    "Cross-reference with other biological databases",
+                    "Materialize interesting query results"
+                ],
+                "sparql_patterns": [
+                    f"cl_wikidata sparql \"<query>\" --endpoint {schema.endpoint}",
+                    f"cl_materialize --from-sparql-results",
+                    "cl_wikidata endpoints (list all available endpoints)"
+                ]
+            },
+            "claude_guidance": {
+                "schema_summary": f"Discovered {len(schema.classes)} classes and {len(schema.properties)} properties from {schema.endpoint}",
+                "endpoint_intelligence": guidance.get("biological_intelligence", []),
+                "query_strategy": [
+                    f"Use {schema.discovery_method} discovery results for informed querying",
+                    f"Confidence level: {schema.confidence_score:.1f} - {'High' if schema.confidence_score > 0.7 else 'Medium' if schema.confidence_score > 0.4 else 'Low'} reliability",
+                    f"Best for: {guidance.get('biological_intelligence', ['General SPARQL queries'])[0] if guidance.get('biological_intelligence') else 'General SPARQL queries'}"
+                ],
+                "workflow_recommendations": guidance.get("next_steps", [])
+            }
+        }
+        
+        # Apply response management for level
+        response_level = ResponseLevel(level)
+        if response_level != ResponseLevel.FULL:
+            final_response, _ = response_manager.truncate_response(
+                response, response_level, preserve_structure=True
+            )
+        else:
+            final_response = response_manager.enhance_for_agent_chain(response)
+        
+        # Output response
+        if output_format == 'json':
+            click.echo(json.dumps(final_response, indent=2))
+        else:
+            _print_schema_human_readable(final_response, schema)
+            
+    except Exception as e:
+        log.error(f"Schema discovery failed for {endpoint}: {e}")
+        error_response = {
+            "success": False,
+            "error": {
+                "code": "SCHEMA_DISCOVERY_FAILED",
+                "message": f"Schema discovery failed for {endpoint}: {str(e)}",
+                "endpoint": endpoint,
+                "method": method,
+                "suggestions": [
+                    "Try a different discovery method (auto, introspection, void, documentation)",
+                    "Check endpoint accessibility and network connectivity",
+                    "Verify endpoint URL if using custom endpoint",
+                    "Use 'cl_wikidata endpoints' to see available endpoints"
+                ]
+            }
+        }
+        
+        if output_format == 'json':
+            click.echo(json.dumps(error_response, indent=2))
+        else:
+            print(f"❌ Schema discovery failed for {endpoint}: {str(e)}")
+            print("💡 Try: cl_wikidata endpoints to see available endpoints")
+
+
+def _print_schema_human_readable(response: Dict[Any, Any], schema):
+    """Print human-readable schema discovery summary."""
+    
+    if response["success"]:
+        data = response["data"]
+        print(f"🔍 Schema Discovery for '{data['endpoint']}'")
+        print(f"   Method: {data['discovery_method']}")
+        print(f"   Confidence: {data['confidence_score']:.2f}")
+        print(f"   Classes: {len(data['schema_info']['classes'])}")
+        print(f"   Properties: {len(data['schema_info']['properties'])}")
+        print(f"   Prefixes: {len(data['schema_info']['prefixes'])}")
+        
+        if data.get('examples'):
+            print(f"\n📝 Example Queries:")
+            for i, example in enumerate(data['examples'][:3], 1):
+                print(f"   {i}. {example}")
+        
+        guidance = response.get("guidance", {})
+        if guidance.get("biological_intelligence"):
+            print(f"\n🧬 Biological Intelligence:")
+            for insight in guidance["biological_intelligence"][:3]:
+                print(f"   • {insight}")
+        
+        suggestions = response.get("suggestions", {})
+        if suggestions.get("immediate_next_steps"):
+            print(f"\n💡 Next Steps:")
+            for step in suggestions["immediate_next_steps"][:3]:
+                print(f"   → {step}")
+
 
 if __name__ == "__main__":
     discover()

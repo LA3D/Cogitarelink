@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 
 from ..adapters.wikidata_client import WikidataClient
+from ..adapters.multi_sparql_client import MultiSparqlClient
 from ..core.entity import Entity
 from ..core.debug import get_logger
 from ..intelligence.guidance_generator import guidance_generator, GuidanceContext, DomainType
@@ -98,9 +99,21 @@ def entity(
 
 
 @wikidata.command()
+def endpoints():
+    """List available SPARQL endpoints with descriptions."""
+    asyncio.run(_endpoints_async())
+
+
+@wikidata.command()
 @click.argument('sparql_query', required=True)
+@click.option('--endpoint', default='wikidata', 
+              help='SPARQL endpoint: wikidata, wikipathways, uniprot, idsm, rhea, or URL')
 @click.option('--limit', default=100, help='Maximum results to return')
 @click.option('--timeout', default=30, help='Query timeout in seconds')
+@click.option('--validate/--no-validate', default=True, 
+              help='Validate query against endpoint vocabulary')
+@click.option('--add-prefixes/--no-add-prefixes', default=True,
+              help='Automatically add endpoint-specific prefixes')
 @click.option('--format', 'output_format', type=click.Choice(['json', 'human', 'table']), 
               default='json', help='Output format')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
@@ -109,22 +122,26 @@ def entity(
               help='Vocabularies for result entities')
 def sparql(
     sparql_query: str,
+    endpoint: str,
     limit: int,
     timeout: int,
+    validate: bool,
+    add_prefixes: bool,
     output_format: str,
     level: str,
     vocab: List[str]
 ):
     """
-    Execute SPARQL queries against Wikidata with optimization.
+    Execute SPARQL queries against multiple biological databases.
     
     Examples:
         cl_wikidata sparql "SELECT ?item ?itemLabel WHERE { ?item wdt:P31 wd:Q8054 } LIMIT 5"
-        cl_wikidata sparql "SELECT ?protein WHERE { ?protein wdt:P31 wd:Q8054; wdt:P703 wd:Q15978631 }" --limit 10
-        cl_wikidata sparql "CONSTRUCT { ?s ?p ?o } WHERE { ?s wdt:P31 wd:Q8054 } LIMIT 5" --format table
+        cl_wikidata sparql "SELECT ?pathway ?title WHERE { ?pathway a wp:Pathway }" --endpoint wikipathways
+        cl_wikidata sparql "SELECT ?protein ?name WHERE { ?protein a up:Protein }" --endpoint uniprot
+        cl_wikidata sparql "SELECT ?compound ?name WHERE { ?compound rdfs:label ?name }" --endpoint idsm
     """
     asyncio.run(_sparql_async(
-        sparql_query, limit, timeout, output_format, level, list(vocab)
+        sparql_query, endpoint, limit, timeout, validate, add_prefixes, output_format, level, list(vocab)
     ))
 
 
@@ -294,44 +311,76 @@ async def _entity_async(
 
 async def _sparql_async(
     sparql_query: str,
+    endpoint: str,
     limit: int,
     timeout: int,
+    validate: bool,
+    add_prefixes: bool,
     output_format: str,
     level: str,
     vocab: List[str]
 ):
-    """Async SPARQL execution with optimization and intelligence."""
+    """Async SPARQL execution with multi-endpoint support and intelligence."""
     
     start_time = time.time()
     
     try:
-        log.info(f"Executing SPARQL query against Wikidata")
+        log.info(f"Executing SPARQL query against {endpoint}")
         
         # Input validation
         if not sparql_query.strip():
             _output_error("SPARQL query cannot be empty", output_format)
             return
         
-        # Add LIMIT if not present
-        if 'LIMIT' not in sparql_query.upper():
-            sparql_query = sparql_query.strip() + f" LIMIT {limit}"
+        # Initialize multi-endpoint SPARQL client
+        client = MultiSparqlClient(timeout=timeout)
         
-        # Initialize Wikidata client
-        client = WikidataClient(timeout=timeout)
+        # Validate query against endpoint if requested
+        if validate:
+            validation = client.validate_query_for_endpoint(sparql_query, endpoint)
+            if not validation.get('valid', True):
+                error_response = {
+                    "success": False,
+                    "error": {
+                        "code": "QUERY_VALIDATION_FAILED",
+                        "message": validation.get('error', 'Query validation failed'),
+                        "endpoint": endpoint,
+                        "wrong_prefixes": validation.get('wrong_prefixes', []),
+                        "expected_prefixes": validation.get('expected_prefixes', []),
+                        "suggestions": validation.get('suggestions', [])
+                    }
+                }
+                _output_response(error_response, output_format)
+                return
         
-        # Execute SPARQL query
-        raw_results = await client.sparql_query(sparql_query)
+        # Execute SPARQL query with multi-endpoint support
+        raw_results = await client.sparql_query(
+            sparql_query, 
+            endpoint=endpoint,
+            add_prefixes=add_prefixes,
+            limit=limit if 'LIMIT' not in sparql_query.upper() else None
+        )
         
         # Process results
         processed_results = _process_sparql_results(raw_results)
         
-        # Generate semantic intelligence
+        # Generate semantic intelligence based on endpoint
+        endpoint_domain_map = {
+            "wikidata": DomainType.KNOWLEDGE_GRAPH,
+            "wikipathways": DomainType.LIFE_SCIENCES,
+            "uniprot": DomainType.LIFE_SCIENCES,
+            "idsm": DomainType.CHEMISTRY,
+            "rhea": DomainType.CHEMISTRY
+        }
+        
+        domain_type = endpoint_domain_map.get(endpoint, DomainType.KNOWLEDGE_GRAPH)
+        
         guidance_context = GuidanceContext(
-            entity_type="WikidataSPARQLResults",
-            domain_type=DomainType.KNOWLEDGE_GRAPH,
+            entity_type=f"{endpoint.title()}SPARQLResults",
+            domain_type=domain_type,
             properties=processed_results.get('variables', []),
             confidence_score=0.85,
-            previous_actions=["sparql_query"],
+            previous_actions=[f"sparql_query_{endpoint}"],
             available_tools=["cl_wikidata entity", "cl_materialize", "cl_sparql"]
         )
         
@@ -339,7 +388,7 @@ async def _sparql_async(
         
         # Build comprehensive response
         response = await _build_sparql_response(
-            sparql_query, processed_results, guidance, start_time, level
+            sparql_query, processed_results, guidance, start_time, level, endpoint, raw_results
         )
         
         # Apply response management
@@ -356,6 +405,70 @@ async def _sparql_async(
     except Exception as e:
         log.error(f"Wikidata SPARQL query failed: {e}")
         _output_error(f"SPARQL query failed: {str(e)}", output_format)
+        sys.exit(1)
+
+
+async def _endpoints_async():
+    """List available SPARQL endpoints."""
+    
+    try:
+        client = MultiSparqlClient()
+        endpoints = client.list_endpoints()
+        
+        response = {
+            "success": True,
+            "data": {
+                "endpoints": endpoints,
+                "total_count": len(endpoints)
+            },
+            "metadata": {
+                "operation": "list_endpoints",
+                "capabilities": [
+                    "Multi-database SPARQL queries",
+                    "Biological database federation", 
+                    "Vocabulary-aware query validation",
+                    "Automatic prefix injection"
+                ]
+            },
+            "suggestions": {
+                "usage_examples": [
+                    "cl_wikidata sparql \"SELECT ?item ?itemLabel WHERE { ?item wdt:P31 wd:Q8054 } LIMIT 5\"",
+                    "cl_wikidata sparql \"SELECT ?pathway ?title WHERE { ?pathway a wp:Pathway } LIMIT 5\" --endpoint wikipathways",
+                    "cl_wikidata sparql \"SELECT ?protein ?name WHERE { ?protein a up:Protein } LIMIT 5\" --endpoint uniprot",
+                    "cl_wikidata sparql \"SELECT ?compound ?name WHERE { ?compound rdfs:label ?name } LIMIT 5\" --endpoint idsm"
+                ],
+                "endpoint_selection": [
+                    "Use 'wikidata' for general knowledge graph queries",
+                    "Use 'wikipathways' for biological pathway analysis",
+                    "Use 'uniprot' for detailed protein information",
+                    "Use 'idsm' for chemical compound data",
+                    "Use 'rhea' for biochemical reaction data"
+                ]
+            },
+            "claude_guidance": {
+                "multi_endpoint_strategy": "Query multiple endpoints for comprehensive biological research",
+                "cross_database_linking": "Use Wikidata cross-references to connect to specialized databases",
+                "workflow_recommendations": [
+                    "Start with Wikidata search to identify entities",
+                    "Follow cross-references to specialized databases",
+                    "Use endpoint-specific vocabularies for detailed queries",
+                    "Materialize results for semantic integration"
+                ]
+            }
+        }
+        
+        click.echo(json.dumps(response, indent=2))
+        
+    except Exception as e:
+        log.error(f"Failed to list endpoints: {e}")
+        error_response = {
+            "success": False,
+            "error": {
+                "code": "ENDPOINT_LISTING_FAILED",
+                "message": f"Failed to list endpoints: {str(e)}"
+            }
+        }
+        click.echo(json.dumps(error_response, indent=2))
         sys.exit(1)
 
 
@@ -448,7 +561,13 @@ async def _build_entity_response(
     
     for prop, db_name in important_props.items():
         if prop in claims:
-            cross_references[db_name] = [claim['value'] for claim in claims[prop]]
+            values = []
+            for claim in claims[prop]:
+                if isinstance(claim, dict) and 'value' in claim:
+                    values.append(claim['value'])
+                elif isinstance(claim, str):
+                    values.append(claim)
+            cross_references[db_name] = values
     
     return {
         "success": True,
@@ -500,11 +619,16 @@ async def _build_sparql_response(
     results: Dict[str, Any],
     guidance: Dict[str, Any],
     start_time: float,
-    level: str
+    level: str,
+    endpoint: str = "wikidata",
+    raw_results: Dict[str, Any] = None
 ) -> Dict[str, Any]:
-    """Build comprehensive SPARQL response with agent intelligence."""
+    """Build comprehensive SPARQL response with multi-endpoint intelligence."""
     
     execution_time = int((time.time() - start_time) * 1000)
+    
+    # Extract endpoint info if available
+    endpoint_info = raw_results.get('endpoint_info', {}) if raw_results else {}
     
     return {
         "success": True,
@@ -512,35 +636,37 @@ async def _build_sparql_response(
             "query": query,
             "sparql_results": results.get("bindings", []),
             "result_count": results.get("total", 0),
-            "columns": results.get("variables", [])
+            "columns": results.get("variables", []),
+            "endpoint": endpoint
         },
         "metadata": {
             "execution_time_ms": execution_time,
             "query_complexity": _calculate_query_complexity(query),
-            "endpoint": "wikidata_sparql",
+            "endpoint": endpoint,
+            "endpoint_info": endpoint_info,
             "confidence_score": 0.85
         },
         "suggestions": {
             "next_tools": [
                 "cl_materialize --from-sparql-results",
-                "cl_wikidata entity <entity_id>",
-                "cl_sparql with refined query"
+                f"cl_wikidata sparql --endpoint {endpoint}" if endpoint != "wikidata" else "cl_wikidata entity <entity_id>",
+                f"cl_wikidata sparql --endpoint other_endpoint for cross-database queries"
             ],
             "reasoning_patterns": guidance.get("reasoning_patterns", []),
             "workflow_guidance": guidance.get("workflow_guidance", {})
         },
         "claude_guidance": {
-            "sparql_summary": f"Retrieved {results.get('total', 0)} results with complexity {_calculate_query_complexity(query):.1f}",
-            "query_intelligence": f"Query uses {len(results.get('variables', []))} variables via Wikidata SPARQL",
+            "sparql_summary": f"Retrieved {results.get('total', 0)} results from {endpoint} with complexity {_calculate_query_complexity(query):.1f}",
+            "endpoint_intelligence": f"Query executed on {endpoint} using {len(results.get('variables', []))} variables",
             "next_actions": [
-                "Materialize results as Entities for semantic processing",
-                "Validate results against known schemas",
+                f"Materialize {endpoint} results as Entities for semantic processing",
+                f"Cross-reference {endpoint} results with other biological databases",
                 "Explore result relationships via follow-up queries"
             ],
             "reasoning_scaffolds": [
-                "SPARQL results can be materialized as semantic entities",
-                "Use entity signatures for result verification",
-                "Consider expanding queries for richer context"
+                f"SPARQL results from {endpoint} can be materialized as semantic entities",
+                "Use cross-references to link between biological databases",
+                f"Consider querying complementary endpoints for {endpoint} data"
             ]
         }
     }
