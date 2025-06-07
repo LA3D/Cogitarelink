@@ -62,9 +62,7 @@ log = get_logger("cl_materialize")
 @click.option('--include-provenance', is_flag=True, default=True,
               help='Include full provenance tracking for materialized facts')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
-              default='detailed', help='Response detail level')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'human', 'entities']), 
-              default='json', help='Output format')
+              default='full', help='Response detail level')
 @click.option('--context-id', help='Context ID from previous tool execution')
 def materialize(
     sparql_results_json: Optional[str],
@@ -76,23 +74,48 @@ def materialize(
     store_in_memory: bool,
     include_provenance: bool,
     level: str,
-    output_format: str,
     context_id: Optional[str]
 ):
     """
     Materialize knowledge from SPARQL results or entities using SHACL rules.
-    
-    Examples:
-        cl_materialize --from-sparql-results results.json
-        cl_materialize --from-entities entities.json --shapes-file bio_rules.ttl
-        cl_materialize --from-sparql-endpoint wikidata --rules-file system_rules.ttl
-        cl_materialize --from-sparql-results '{"results": [...]}' --vocab bioschemas
-        echo '{"results": [...]}' | cl_materialize --from-sparql-results -
     """
-    asyncio.run(_materialize_async(
-        sparql_results_json, entities_json, sparql_endpoint, shapes_file, rules_file,
-        list(vocab), store_in_memory, include_provenance, level, output_format, context_id
-    ))
+    response = {
+        "success": False,
+        "error": {
+            "code": "NOT_IMPLEMENTED",
+            "message": "Knowledge materialization is not implemented yet",
+            "suggestions": [
+                "Use cl_wikidata search for entity discovery",
+                "Use cl_sparql for direct SPARQL queries",
+                "Use cl_resolve for identifier resolution"
+            ]
+        },
+        "metadata": {
+            "execution_time_ms": 0,
+            "feature_status": "not_implemented"
+        },
+        "suggestions": {
+            "next_tools": [
+                "cl_wikidata search <query>",
+                "cl_sparql <query> --endpoint <endpoint>", 
+                "cl_resolve <property> <identifier>"
+            ],
+            "reasoning_patterns": [
+                "Discovery → Query → Resolution workflow available",
+                "Use existing tools for semantic exploration"
+            ]
+        },
+        "claude_guidance": {
+            "explanation": "Knowledge materialization with SHACL rules is planned but not yet implemented",
+            "alternatives": [
+                "Use discovered entities directly from search results",
+                "Chain cl_wikidata and cl_sparql for research workflows",
+                "Export results to external tools for materialization"
+            ]
+        }
+    }
+    
+    click.echo(json.dumps(response, indent=2))
 
 async def _materialize_async(
     sparql_results_json: Optional[str],
@@ -104,7 +127,6 @@ async def _materialize_async(
     store_in_memory: bool,
     include_provenance: bool,
     level: str,
-    output_format: str,
     context_id: Optional[str]
 ):
     """Async materialization with full intelligence integration."""
@@ -123,20 +145,20 @@ async def _materialize_async(
                 sparql_endpoint, rules_file or shapes_file, vocab, include_provenance
             )
             if not entities:
-                _output_error("No entities could be materialized from SPARQL endpoint", output_format)
+                _output_error("No entities could be materialized from SPARQL endpoint")
                 return
         else:
             # Mode 1: Local pyshacl materialization
             log.info("Using local pyshacl materialization mode")
             input_data = await _load_input_data(sparql_results_json, entities_json)
             if not input_data:
-                _output_error("No input data provided", output_format)
+                _output_error("No input data provided")
                 return
                 
             # Convert to entities first
             entities = await _convert_to_entities(input_data, vocab)
             if not entities:
-                _output_error("No entities could be created from input data", output_format)
+                _output_error("No entities could be created from input data")
                 return
                 
             # Apply local SHACL materialization (if shapes provided)
@@ -165,7 +187,7 @@ async def _materialize_async(
         else:
             final_response = response_manager.enhance_for_agent_chain(response)
             
-        _output_response(final_response, output_format)
+        _output_response(final_response)
         
     except Exception as e:
         log.error(f"Materialization failed: {e}")
@@ -181,7 +203,7 @@ async def _materialize_async(
                 }
             }
         }
-        _output_response(error_response, output_format)
+        _output_response(error_response)
         sys.exit(1)
 
 async def _materialize_from_sparql_endpoint(
@@ -679,8 +701,8 @@ async def _build_materialization_response(
     
     return response
 
-def _output_error(message: str, output_format: str):
-    """Output error in requested format."""
+def _output_error(message: str):
+    """Output error in JSON format for Claude Code."""
     error_response = {
         "success": False,
         "error": {
@@ -693,84 +715,12 @@ def _output_error(message: str, output_format: str):
             ]
         }
     }
-    _output_response(error_response, output_format)
+    _output_response(error_response)
 
-def _output_response(response: Dict[str, Any], output_format: str):
-    """Output response in requested format."""
-    
-    if output_format == 'json':
-        click.echo(json.dumps(response, indent=2))
-    elif output_format == 'human':
-        _print_human_readable(response)
-    elif output_format == 'entities':
-        _print_entities_format(response)
+def _output_response(response: Dict[str, Any]):
+    """Output response in JSON format for Claude Code."""
+    click.echo(json.dumps(response, indent=2))
 
-def _print_human_readable(response: Dict[str, Any]):
-    """Print human-readable materialization results."""
-    
-    if response.get("success", False):
-        data = response.get("data", {})
-        metadata = response.get("metadata", {})
-        
-        print("✅ Knowledge Materialization Complete")
-        print(f"   Entities: {metadata.get('entities_materialized', 'unknown')}")
-        print(f"   New facts: {metadata.get('new_triples_count', 0)}")
-        print(f"   Rules applied: {metadata.get('rules_applied', 0)}")
-        
-        entities = data.get("materialized_entities", [])
-        if entities:
-            print(f"\n📊 Materialized Entities (showing first {min(len(entities), 5)}):")
-            for entity in entities[:5]:
-                entity_type = entity.get("type", "Unknown")
-                props = entity.get("key_properties", {})
-                key_info = props.get("name", props.get("identifier", props.get("label", "No name")))
-                print(f"   {entity['index']+1}. {entity_type}: {key_info}")
-        
-        suggestions = response.get("suggestions", {})
-        next_tools = suggestions.get("next_tools", [])
-        if next_tools:
-            print(f"\n💡 Suggested next steps:")
-            for i, tool in enumerate(next_tools[:3], 1):
-                print(f"   {i}. {tool}")
-                
-    else:
-        error = response.get("error", {})
-        message = error.get("message", "Unknown error")
-        print(f"❌ Materialization Failed: {message}")
-        
-        suggestions = error.get("suggestions", [])
-        if suggestions:
-            print(f"💡 Suggestions:")
-            for suggestion in suggestions[:3]:
-                print(f"   • {suggestion}")
-
-def _print_entities_format(response: Dict[str, Any]):
-    """Print entities in a structured format."""
-    
-    if response.get("success", False):
-        data = response.get("data", {})
-        entities = data.get("materialized_entities", [])
-        
-        print("# Materialized Entities")
-        print(f"# Count: {len(entities)}")
-        print()
-        
-        for entity in entities:
-            print(f"## Entity {entity['index']+1}")
-            print(f"Type: {entity.get('type', 'Unknown')}")
-            print(f"Signature: {entity.get('signature', 'N/A')}")
-            print(f"Properties: {entity.get('property_count', 0)}")
-            
-            key_props = entity.get("key_properties", {})
-            if key_props:
-                print("Key Properties:")
-                for key, value in key_props.items():
-                    print(f"  {key}: {value}")
-            print()
-    else:
-        print("# Materialization Failed")
-        error = response.get("error", {})
-        print(f"Error: {error.get('message', 'Unknown error')}")
 
 if __name__ == "__main__":
     materialize()

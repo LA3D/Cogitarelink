@@ -196,7 +196,7 @@ class Entity(BaseModel):
             properties=list(self.content.keys()),
             confidence_score=0.8,  # High confidence for validated entities
             previous_actions=[],
-            available_tools=["cl_discover", "cl_sparql", "cl_materialize", "cl_validate"]
+            available_tools=["cl_discover", "cl_sparql", "cl_validate", "cl_resolve"]
         )
         
         # Generate sophisticated guidance
@@ -281,7 +281,7 @@ class Entity(BaseModel):
             properties=list(self.content.keys()),
             confidence_score=0.8,  # High confidence for validated entities
             previous_actions=[],
-            available_tools=["cl_discover", "cl_sparql", "cl_materialize", "cl_validate"]
+            available_tools=["cl_discover", "cl_sparql", "cl_validate", "cl_resolve"]
         )
         
         # Generate comprehensive guidance

@@ -32,6 +32,7 @@ except ImportError:
 from ..intelligence.discovery_engine import discovery_engine
 from ..intelligence.response_manager import response_manager, ResponseLevel
 from ..intelligence.guidance_generator import guidance_generator, GuidanceContext, DomainType
+from ..intelligence.discovery_patterns import add_sparql_strategy_guidance
 from ..core.entity import Entity
 from ..core.debug import get_logger
 from ..vocab.registry import registry
@@ -56,10 +57,8 @@ SPARQL_PATTERNS = {
 @click.option('--validate-query/--no-validate-query', default=True,
               help='Validate query structure and vocabulary (default: True)')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
-              default='detailed', help='Response detail level')
+              default='full', help='Response detail level')
 @click.option('--max-results', default=100, help='Maximum results to return')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'human', 'csv']), 
-              default='json', help='Output format')
 @click.option('--domains', multiple=True, help='Domain hints for discovery')
 def sparql_query(
     query: str,
@@ -69,21 +68,14 @@ def sparql_query(
     validate_query: bool,
     level: str,
     max_results: int,
-    output_format: str,
     domains: List[str]
 ):
     """
     Execute SPARQL queries with discovery-first guardrails and vocabulary validation.
-    
-    Examples:
-        cl_sparql "SELECT ?protein WHERE { ?protein a <http://schema.org/Protein> }"
-        cl_sparql "SELECT * WHERE { ?s ?p ?o } LIMIT 10" --endpoint wikidata
-        cl_sparql "PREFIX wp: <http://wikipathways.org/> SELECT ?pathway WHERE { ?pathway wp:organism ?org }" --discover-first
-        cl_sparql "SELECT ?protein ?name WHERE { ?protein a bioschemas:Protein ; name ?name }" --context-id ctx_abc123
     """
     asyncio.run(_sparql_async(
         query, endpoint, context_id, discover_first, validate_query,
-        level, max_results, output_format, list(domains)
+        level, max_results, list(domains)
     ))
 
 async def _sparql_async(
@@ -94,7 +86,6 @@ async def _sparql_async(
     validate_query: bool,
     level: str,
     max_results: int,
-    output_format: str,
     domains: List[str]
 ):
     """Async SPARQL execution with full intelligence integration."""
@@ -109,7 +100,7 @@ async def _sparql_async(
         validation_result = await _validate_sparql_query(query, domains)
         if not validation_result["valid"]:
             response = _build_validation_error_response(validation_result, query)
-            _output_response(response, output_format)
+            _output_response(response)
             return
         
         # Step 2: Discovery-first guardrails
@@ -122,7 +113,7 @@ async def _sparql_async(
                 response = _build_discovery_required_response(
                     discovery_context, query, validation_result
                 )
-                _output_response(response, output_format)
+                _output_response(response)
                 return
         
         # Step 3: Execute SPARQL query (placeholder for now)
@@ -143,7 +134,7 @@ async def _sparql_async(
         else:
             final_response = response_manager.enhance_for_agent_chain(response)
         
-        _output_response(final_response, output_format)
+        _output_response(final_response)
         
     except Exception as e:
         log.error(f"SPARQL execution failed: {e}")
@@ -159,7 +150,7 @@ async def _sparql_async(
                 }
             }
         }
-        _output_response(error_response, output_format)
+        _output_response(error_response)
         sys.exit(1)
 
 async def _validate_sparql_query(query: str, domains: List[str]) -> Dict[str, Any]:
@@ -582,7 +573,7 @@ async def _build_sparql_response(
         properties=list(query_result.get("results", [{}])[0].keys()) if query_result.get("results") else [],
         confidence_score=0.9,  # High confidence for successful queries
         previous_actions=["sparql_query"],
-        available_tools=["cl_materialize", "cl_validate", "cl_explain"]
+        available_tools=["cl_validate", "cl_explain", "cl_resolve"]
     )
     
     # Generate guidance
@@ -643,9 +634,9 @@ async def _build_sparql_response(
         },
         "suggestions": {
             "next_tools": [
-                "cl_materialize --from-sparql-results",
                 "cl_validate --sparql-results", 
-                "cl_explain --sparql-reasoning"
+                "cl_explain --sparql-reasoning",
+                "cl_resolve --follow-results"
             ],
             "reasoning_patterns": guidance["reasoning_patterns"],
             "workflow_guidance": guidance["workflow_guidance"],
@@ -681,10 +672,13 @@ async def _build_sparql_response(
         response["suggestions"]["chaining_context"] = {
             "previous_context": context_id,
             "recommended_workflows": [
-                f"cl_discover → cl_sparql → cl_materialize",
+                f"cl_discover → cl_sparql → cl_validate",
                 f"cl_sparql → cl_validate → cl_explain"
             ]
         }
+    
+    # Add tool-specific SPARQL strategy guidance
+    add_sparql_strategy_guidance(response, result_count, validation_result["complexity_score"])
     
     return response
 
@@ -853,77 +847,10 @@ def _extract_entities_from_query(query: str) -> List[str]:
             entities.append(prefixed)
     return entities[:5]  # Limit for recovery suggestions
 
-def _output_response(response: Dict[str, Any], output_format: str):
-    """Output response in requested format."""
-    
-    if output_format == 'json':
-        click.echo(json.dumps(response, indent=2))
-    elif output_format == 'human':
-        _print_human_readable(response)
-    elif output_format == 'csv':
-        _print_csv_format(response)
+def _output_response(response: Dict[str, Any]):
+    """Output response in JSON format for Claude Code."""
+    click.echo(json.dumps(response, indent=2))
 
-def _print_human_readable(response: Dict[str, Any]):
-    """Print human-readable SPARQL results."""
-    
-    if response.get("success", False):
-        data = response.get("data", {})
-        print(f"✅ SPARQL Query Results")
-        
-        # Handle potentially truncated fields gracefully
-        result_count = data.get('result_count', 'unknown')
-        print(f"   Results: {result_count}")
-        
-        query_meta = data.get('query_metadata', {})
-        if 'complexity_score' in query_meta:
-            print(f"   Complexity: {query_meta['complexity_score']:.1f}")
-        if 'execution_time_ms' in query_meta:
-            print(f"   Execution time: {query_meta['execution_time_ms']}ms")
-        
-        sparql_results = data.get("sparql_results", [])
-        if sparql_results:
-            print(f"\n📊 Sample Results:")
-            for i, result in enumerate(sparql_results[:3], 1):
-                print(f"   {i}. {result}")
-        
-        suggestions = response.get("suggestions", {})
-        next_tools = suggestions.get("next_tools", [])
-        if next_tools:
-            print(f"\n💡 Suggested next steps:")
-            for i, tool in enumerate(next_tools[:3], 1):
-                print(f"   {i}. {tool}")
-                
-        # Show vocabulary information if available
-        vocab_count = response.get("metadata", {}).get("vocabularies_count", 0)
-        if vocab_count > 0:
-            print(f"\n📚 Vocabularies used: {vocab_count}")
-            
-    else:
-        error = response.get("error", {})
-        message = error.get("message", "Unknown error")
-        print(f"❌ SPARQL Query Failed: {message}")
-        
-        if "required_actions" in error:
-            print(f"🔍 Required Discovery:")
-            for action in error["required_actions"][:3]:
-                print(f"   • {action}")
-
-def _print_csv_format(response: Dict[str, Any]):
-    """Print SPARQL results in CSV format."""
-    
-    if response["success"] and response["data"]["sparql_results"]:
-        results = response["data"]["sparql_results"]
-        if results:
-            # Print CSV header
-            headers = list(results[0].keys())
-            print(",".join(headers))
-            
-            # Print CSV rows
-            for result in results:
-                row = [str(result.get(h, "")) for h in headers]
-                print(",".join(row))
-    else:
-        print("# No results available")
 
 if __name__ == "__main__":
     sparql_query()

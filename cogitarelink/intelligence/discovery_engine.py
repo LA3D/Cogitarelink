@@ -275,7 +275,7 @@ class DiscoveryEngine:
         if "biology" in metadata.domain_context or "bioschemas" in metadata.domain_context:
             suggestions["next_tools"].extend([
                 "cl_sparql --query 'SELECT ?property ?value WHERE { <{}> ?property ?value }'".format(metadata.resource_id),
-                "cl_materialize --entity {}".format(metadata.resource_id)
+                "cl_validate --entity {}".format(metadata.resource_id)
             ])
             
             suggestions["research_workflows"].extend([
@@ -316,7 +316,7 @@ class DiscoveryEngine:
             "suggestions": [
                 "Verify the resource identifier is correct",
                 "Add domain hints to improve discovery accuracy",
-                "Try manual resolution with cl_sparql or cl_materialize"
+                "Try manual resolution with cl_sparql or cl_validate"
             ],
             "recovery_plan": {
                 "next_tool": "cl_discover",

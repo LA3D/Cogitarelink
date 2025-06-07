@@ -18,7 +18,6 @@ import json
 import time
 from typing import Optional, Dict, List, Any, Union
 from urllib.parse import urlparse
-from pathlib import Path
 
 from ..vocab.registry import registry
 from ..vocab.composer import composer
@@ -27,18 +26,9 @@ from ..core.cache import InMemoryCache
 
 log = get_logger("cl_ontfetch")
 
-# Import ontology discovery infrastructure from wikidata-mcp
-import sys
-wikidata_mcp_path = Path(__file__).parent.parent.parent.parent / "wikidata-mcp" / "src"
-if str(wikidata_mcp_path) not in sys.path:
-    sys.path.insert(0, str(wikidata_mcp_path))
-
-try:
-    from wikidata_mcp.ontology_discovery import OntologyDiscovery
-    ONTOLOGY_DISCOVERY_AVAILABLE = True
-except ImportError:
-    ONTOLOGY_DISCOVERY_AVAILABLE = False
-    log.warning("Ontology discovery not available - install wikidata-mcp dependencies")
+# Import Cogitarelink's own ontology discovery implementation
+from ..intelligence.ontology_discovery import OntologyDiscovery
+ONTOLOGY_DISCOVERY_AVAILABLE = True
 
 class AgenticOntologyFetcher:
     """
@@ -122,7 +112,8 @@ class AgenticOntologyFetcher:
                 cached_ontology = self.ontology_cache.get(cache_key)
                 if cached_ontology:
                     log.debug(f"Using cached ontology for {target}")
-                    cached_ontology["metadata"]["cache_hit"] = True
+                    if cached_ontology.get("success") and "metadata" in cached_ontology:
+                        cached_ontology["metadata"]["cache_hit"] = True
                     return cached_ontology
             
             # Perform agentic discovery based on type
@@ -139,11 +130,16 @@ class AgenticOntologyFetcher:
             integrated_ontology = await self._integrate_with_vocabulary_manager(ontology_data, domain)
             
             # Cache the result
-            self.ontology_cache.set(cache_key, integrated_ontology, ttl=3600)  # 1 hour TTL
+            self.ontology_cache.set(cache_key, integrated_ontology)  # TTL set during cache initialization
             
             execution_time = int((time.time() - start_time) * 1000)
-            integrated_ontology["metadata"]["execution_time_ms"] = execution_time
-            integrated_ontology["metadata"]["cache_hit"] = False
+            
+            # Add execution metadata only if this is a successful result
+            if integrated_ontology.get("success"):
+                if "metadata" not in integrated_ontology:
+                    integrated_ontology["metadata"] = {}
+                integrated_ontology["metadata"]["execution_time_ms"] = execution_time
+                integrated_ontology["metadata"]["cache_hit"] = False
             
             return integrated_ontology
             

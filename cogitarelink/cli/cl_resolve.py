@@ -19,23 +19,15 @@ import time
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 
-# Import ontology discovery infrastructure from wikidata-mcp
-import sys
-wikidata_mcp_path = Path(__file__).parent.parent.parent.parent / "wikidata-mcp" / "src"
-if str(wikidata_mcp_path) not in sys.path:
-    sys.path.insert(0, str(wikidata_mcp_path))
-
-try:
-    from wikidata_mcp.client import WikidataClient
-    from wikidata_mcp.ontology_discovery import OntologyDiscovery
-    WIKIDATA_CLIENT_AVAILABLE = True
-    ONTOLOGY_DISCOVERY_AVAILABLE = True
-except ImportError as e:
-    WIKIDATA_CLIENT_AVAILABLE = False
-    ONTOLOGY_DISCOVERY_AVAILABLE = False
-    print(f"Warning: Wikidata MCP dependencies not available: {e}")
+# Import Cogitarelink's own implementations
+from ..adapters.wikidata_client import WikidataClient
+from ..intelligence.ontology_discovery import OntologyDiscovery
+WIKIDATA_CLIENT_AVAILABLE = True
+ONTOLOGY_DISCOVERY_AVAILABLE = True
 
 from ..core.debug import get_logger
+from ..vocab.registry import registry
+from ..vocab.composer import composer
 from .cl_ontfetch import AgenticOntologyFetcher
 
 log = get_logger("cl_resolve")
@@ -44,9 +36,6 @@ class UniversalIdentifierResolver:
     """Universal identifier resolution using service description-powered approach"""
     
     def __init__(self):
-        if not WIKIDATA_CLIENT_AVAILABLE:
-            raise RuntimeError("Wikidata MCP client not available - check dependencies")
-        
         self.wikidata_client = WikidataClient()
         self.discovery_engine = OntologyDiscovery(progress_format="silent") if ONTOLOGY_DISCOVERY_AVAILABLE else None
         self.property_cache = {}

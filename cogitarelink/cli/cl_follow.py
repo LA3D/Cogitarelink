@@ -364,7 +364,7 @@ async def _generate_cross_reference_guidance(
         properties=list(cross_references.keys()),
         confidence_score=0.9,  # High confidence for cross-reference data
         previous_actions=["cross_reference_following"],
-        available_tools=["cl_wikidata sparql", "cl_materialize", "cl_discover"]
+        available_tools=["cl_wikidata sparql", "cl_validate", "cl_discover"]
     )
     
     return guidance_generator.generate_guidance(guidance_context)
@@ -417,7 +417,7 @@ async def _build_follow_response(
             "next_tools": [
                 "Query external databases using discovered identifiers",
                 "cl_wikidata sparql with cross-reference filters",
-                "cl_materialize entity data for semantic analysis"
+                "cl_validate entity data for semantic analysis"
             ],
             "database_exploration": [
                 f"Explore {db}: {ids[0] if ids else 'N/A'}" 

@@ -415,7 +415,7 @@ async def _generate_entity_intelligence(
         properties=list(entity_data.get("claims", {}).keys()),
         confidence_score=0.9,
         previous_actions=["entity_description"],
-        available_tools=["cl_sparql", "cl_property", "cl_follow", "cl_materialize"]
+        available_tools=["cl_sparql", "cl_property", "cl_follow", "cl_validate"]
     )
     
     return guidance_generator.generate_guidance(guidance_context)
@@ -542,7 +542,7 @@ async def _build_describe_response(
             "next_tools": [
                 f"cl_follow {entity_data.get('id')} --databases {','.join(list(cross_references.get('databases', {}).keys())[:3])}",
                 f"cl_sparql 'SELECT ?related WHERE {{ wd:{entity_data.get('id')} ?p ?related }} LIMIT 10'",
-                "cl_materialize --from-entity-description"
+                "cl_validate --entity-description"
             ],
             "cross_database_opportunities": [
                 f"Follow {db}: {refs[0]}" for db, refs in cross_references.get("databases", {}).items()

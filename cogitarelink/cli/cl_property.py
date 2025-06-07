@@ -410,7 +410,7 @@ async def _generate_property_intelligence(
         properties=[property_identifier],
         confidence_score=0.85,
         previous_actions=["property_analysis"],
-        available_tools=["cl_sparql", "cl_describe", "cl_materialize"]
+        available_tools=["cl_sparql", "cl_describe", "cl_validate"]
     )
     
     return guidance_generator.generate_guidance(guidance_context)
@@ -452,7 +452,7 @@ async def _build_property_response(
             "next_tools": [
                 f"cl_sparql 'SELECT ?s ?o WHERE {{ ?s {property_identifier} ?o }} LIMIT 10'",
                 f"cl_describe <entity_id> --include-properties {property_identifier}",
-                "cl_materialize --from-property-analysis"
+                "cl_validate --property-analysis"
             ],
             "usage_patterns": [
                 f"Property used {usage_analysis.get('total_usage_count', 0)} times",

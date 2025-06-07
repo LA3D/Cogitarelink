@@ -90,18 +90,18 @@ class GuidanceGenerator:
         # Tool recommendation patterns
         self.tool_sequences = {
             "biological_discovery": [
-                "cl_discover → cl_sparql → cl_materialize",
+                "cl_discover → cl_sparql → cl_validate",
                 "cl_discover → cl_resolve → cl_explain",
                 "cl_sparql → cl_validate → cl_query_memory"
             ],
             "semantic_exploration": [
                 "cl_discover → cl_validate → cl_explain",
-                "cl_resolve → cl_sparql → cl_materialize",
+                "cl_resolve → cl_sparql → cl_validate",
                 "cl_query_memory → cl_explain → cl_orchestrate"
             ],
             "research_workflow": [
                 "cl_discover → cl_orchestrate → cl_explain",
-                "cl_materialize → cl_validate → cl_query_memory"
+                "cl_validate → cl_query_memory → cl_explain"
             ]
         }
     
@@ -215,7 +215,7 @@ class GuidanceGenerator:
                 recommendations.extend([
                     "cl_sparql --query 'SELECT ?pathway WHERE { <entity> wdt:P2781 ?pathway }'",
                     "cl_resolve --identifier <uniprot_id>",
-                    "cl_materialize --entity <entity> --depth 2"
+                    "cl_validate --entity <entity> --depth 2"
                 ])
             elif context.entity_type == "Gene":
                 recommendations.extend([

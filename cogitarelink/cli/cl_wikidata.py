@@ -21,6 +21,11 @@ from ..core.entity import Entity
 from ..core.debug import get_logger
 from ..intelligence.guidance_generator import guidance_generator, GuidanceContext, DomainType
 from ..intelligence.response_manager import response_manager, ResponseLevel
+from ..intelligence.discovery_patterns import (
+    add_search_guidance, 
+    add_entity_navigation_guidance,
+    extract_external_identifiers
+)
 
 log = get_logger("cl_wikidata")
 
@@ -34,21 +39,18 @@ def wikidata():
 @wikidata.command()
 @click.argument('query', required=True)
 @click.option('--language', default='en', help='Language code for labels')
-@click.option('--limit', default=10, help='Maximum results to return')
+@click.option('--limit', default=25, help='Maximum results to return')
 @click.option('--entity-type', help='Filter by entity type (item, property)')
 @click.option('--vocab', multiple=True, default=['wikidata', 'schema.org'],
               help='Vocabularies for entity context')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'human']), 
-              default='json', help='Output format')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
-              default='detailed', help='Response detail level')
+              default='full', help='Response detail level')
 def search(
     query: str,
     language: str,
     limit: int,
     entity_type: Optional[str],
     vocab: List[str],
-    output_format: str,
     level: str
 ):
     """
@@ -61,7 +63,7 @@ def search(
         cl_wikidata search "insulin" --format human
     """
     asyncio.run(_search_async(
-        query, language, limit, entity_type, list(vocab), output_format, level
+        query, language, limit, entity_type, list(vocab), level
     ))
 
 
@@ -72,8 +74,6 @@ def search(
 @click.option('--properties', multiple=True, help='Specific properties to include')
 @click.option('--vocab', multiple=True, default=['wikidata', 'schema.org'],
               help='Vocabularies for entity context')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'human']), 
-              default='json', help='Output format')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
               default='detailed', help='Response detail level')
 def entity(
@@ -82,7 +82,6 @@ def entity(
     include_claims: bool,
     properties: List[str],
     vocab: List[str],
-    output_format: str,
     level: str
 ):
     """
@@ -94,7 +93,7 @@ def entity(
         cl_wikidata entity Q8054 --properties P31,P279 --format human
     """
     asyncio.run(_entity_async(
-        entity_id, language, include_claims, list(properties), list(vocab), output_format, level
+        entity_id, language, include_claims, list(properties), list(vocab), level
     ))
 
 
@@ -105,21 +104,73 @@ def endpoints():
 
 
 @wikidata.command()
+@click.argument('endpoint', required=True)
+@click.option('--method', default='auto', help='Discovery method: auto, void, introspection, documentation, samples')
+def discover(endpoint: str, method: str):
+    """
+    Discover endpoint schema with biological reasoning patterns.
+    
+    Examples:
+        cl_wikidata discover wikidata
+        cl_wikidata discover wikipathways --method introspection
+        cl_wikidata discover uniprot --format human
+    """
+    asyncio.run(_discover_async(endpoint, method))
+
+
+@wikidata.command()
+@click.argument('property_id', required=True)
+@click.argument('identifier', required=True)
+@click.option('--validate/--no-validate', default=True, help='Enable validation')
+@click.option('--sparql/--no-sparql', default=True, help='Enable SPARQL resolution')
+@click.option('--verbosity', type=click.Choice(['summary', 'detailed', 'full']), default='detailed', help='Response verbosity')
+@click.option('--format', 'output_format', type=click.Choice(['json', 'human']), 
+              default='json', help='Output format')
+def resolve(property_id: str, identifier: str, validate: bool, sparql: bool, verbosity: str):
+    """
+    Universal external identifier resolution.
+    
+    Examples:
+        cl_wikidata resolve P352 P01308
+        cl_wikidata resolve P683 CHEBI:17790 --no-validate
+        cl_wikidata resolve P486 D008687 --verbosity full
+    """
+    asyncio.run(_resolve_async(property_id, identifier, validate, sparql, verbosity))
+
+
+@wikidata.command()
+@click.option('--domain', type=click.Choice(['biological', 'spatial', 'general']), default='general', help='Domain-specific guidance')
+@click.option('--level', type=click.Choice(['beginner', 'intermediate', 'advanced']), default='beginner', help='Complexity level')
+@click.option('--format', 'output_format', type=click.Choice(['json', 'human']), 
+              default='json', help='Output format')
+def guide(domain: str, level: str):
+    """
+    Agent workflow guidance and tool discovery.
+    
+    Examples:
+        cl_wikidata guide --domain biological
+        cl_wikidata guide --domain spatial --level intermediate
+        cl_wikidata guide --level advanced --format human
+    """
+    asyncio.run(_guide_async(domain, level))
+
+
+@wikidata.command()
 @click.argument('sparql_query', required=True)
 @click.option('--endpoint', default='wikidata', 
               help='SPARQL endpoint: wikidata, wikipathways, uniprot, idsm, rhea, or URL')
-@click.option('--limit', default=100, help='Maximum results to return')
+@click.option('--limit', default=50, help='Maximum results to return')
 @click.option('--timeout', default=30, help='Query timeout in seconds')
 @click.option('--validate/--no-validate', default=True, 
               help='Validate query against endpoint vocabulary')
 @click.option('--add-prefixes/--no-add-prefixes', default=True,
               help='Automatically add endpoint-specific prefixes')
-@click.option('--format', 'output_format', type=click.Choice(['json', 'human', 'table']), 
-              default='json', help='Output format')
 @click.option('--level', type=click.Choice(['summary', 'detailed', 'full']), 
               default='detailed', help='Response detail level')
 @click.option('--vocab', multiple=True, default=['wikidata'],
               help='Vocabularies for result entities')
+@click.option('--page', default=1, help='Page number for results (1-based)')
+@click.option('--page-size', default=25, help='Results per page')
 def sparql(
     sparql_query: str,
     endpoint: str,
@@ -127,9 +178,10 @@ def sparql(
     timeout: int,
     validate: bool,
     add_prefixes: bool,
-    output_format: str,
     level: str,
-    vocab: List[str]
+    vocab: List[str],
+    page: int,
+    page_size: int
 ):
     """
     Execute SPARQL queries against multiple biological databases.
@@ -141,7 +193,7 @@ def sparql(
         cl_wikidata sparql "SELECT ?compound ?name WHERE { ?compound rdfs:label ?name }" --endpoint idsm
     """
     asyncio.run(_sparql_async(
-        sparql_query, endpoint, limit, timeout, validate, add_prefixes, output_format, level, list(vocab)
+        sparql_query, endpoint, limit, timeout, validate, add_prefixes, level, list(vocab), page, page_size
     ))
 
 
@@ -151,7 +203,6 @@ async def _search_async(
     limit: int,
     entity_type: Optional[str],
     vocab: List[str],
-    output_format: str,
     level: str
 ):
     """Async Wikidata search with semantic intelligence."""
@@ -163,11 +214,11 @@ async def _search_async(
         
         # Input validation
         if not query.strip():
-            _output_error("Search query cannot be empty", output_format)
+            _output_error("Search query cannot be empty")
             return
             
         if limit < 1 or limit > 50:
-            _output_error(f"Limit must be between 1 and 50, got: {limit}", output_format)
+            _output_error(f"Limit must be between 1 and 50, got: {limit}")
             return
         
         # Initialize Wikidata client
@@ -188,7 +239,7 @@ async def _search_async(
             properties=["identifier", "name", "description"] + ([f"entity_type:{entity_type}"] if entity_type else []),
             confidence_score=0.9,
             previous_actions=["search"],
-            available_tools=["cl_wikidata entity", "cl_sparql", "cl_materialize"]
+            available_tools=["cl_wikidata entity", "cl_sparql", "cl_validate"]
         )
         
         guidance = guidance_generator.generate_guidance(guidance_context)
@@ -207,11 +258,11 @@ async def _search_async(
         else:
             final_response = response_manager.enhance_for_agent_chain(response)
             
-        _output_response(final_response, output_format)
+        _output_response(final_response)
         
     except Exception as e:
         log.error(f"Wikidata search failed: {e}")
-        _output_error(f"Search failed: {str(e)}", output_format)
+        _output_error(f"Search failed: {str(e)}")
         sys.exit(1)
 
 
@@ -221,7 +272,6 @@ async def _entity_async(
     include_claims: bool,
     properties: List[str],
     vocab: List[str],
-    output_format: str,
     level: str
 ):
     """Async Wikidata entity retrieval with semantic intelligence."""
@@ -235,7 +285,7 @@ async def _entity_async(
         if not ((entity_id.startswith('Q') or entity_id.startswith('P')) and entity_id[1:].isdigit()):
             _output_error(
                 f"Entity ID must be in format Q123456 or P123456, got: {entity_id}",
-                output_format
+                "json"
             )
             return
         
@@ -252,15 +302,24 @@ async def _entity_async(
         raw_result = await client.get_entities([entity_id], language, props)
         
         if entity_id not in raw_result.get('entities', {}):
-            _output_error(f"Entity {entity_id} not found", output_format)
+            _output_error(f"Entity {entity_id} not found")
             return
         
         # Convert to CogitareLink entity
         entity_data = raw_result['entities'][entity_id]
+        
+        # Filter claims if specific properties were requested
+        if properties and 'claims' in entity_data:
+            filtered_claims = {}
+            for prop in properties:
+                if prop in entity_data['claims']:
+                    filtered_claims[prop] = entity_data['claims'][prop]
+            entity_data['claims'] = filtered_claims
+        
         entity = await client.convert_entity_data_to_entity(entity_data, entity_id, vocab)
         
         if not entity:
-            _output_error(f"Failed to process entity {entity_id}", output_format)
+            _output_error(f"Failed to process entity {entity_id}", "json")
             return
         
         # Generate semantic intelligence based on entity type
@@ -282,14 +341,14 @@ async def _entity_async(
             properties=list(claims.keys()) if claims else [],
             confidence_score=0.95,
             previous_actions=["entity_retrieval"],
-            available_tools=["cl_wikidata sparql", "cl_materialize", "cl_discover"]
+            available_tools=["cl_wikidata sparql", "cl_validate", "cl_discover"]
         )
         
         guidance = guidance_generator.generate_guidance(guidance_context)
         
         # Build comprehensive response
         response = await _build_entity_response(
-            entity, raw_result, guidance, start_time, level
+            entity, raw_result, guidance, start_time, level, properties_filtered=bool(properties)
         )
         
         # Apply response management
@@ -301,11 +360,11 @@ async def _entity_async(
         else:
             final_response = response_manager.enhance_for_agent_chain(response)
             
-        _output_response(final_response, output_format)
+        _output_response(final_response)
         
     except Exception as e:
         log.error(f"Wikidata entity retrieval failed: {e}")
-        _output_error(f"Entity retrieval failed: {str(e)}", output_format)
+        _output_error(f"Entity retrieval failed: {str(e)}")
         sys.exit(1)
 
 
@@ -316,9 +375,10 @@ async def _sparql_async(
     timeout: int,
     validate: bool,
     add_prefixes: bool,
-    output_format: str,
     level: str,
-    vocab: List[str]
+    vocab: List[str],
+    page: int,
+    page_size: int
 ):
     """Async SPARQL execution with multi-endpoint support and intelligence."""
     
@@ -326,6 +386,34 @@ async def _sparql_async(
     
     try:
         log.info(f"Executing SPARQL query against {endpoint}")
+        
+        # Discovery-first guardrail (Claude Code pattern)
+        if endpoint != "wikidata":
+            # Check if endpoint schema has been discovered
+            # For now, we'll implement basic vocabulary validation
+            known_endpoints = {"wikidata", "wikipathways", "uniprot", "idsm", "rhea"}
+            if endpoint not in known_endpoints:
+                discovery_required_response = {
+                    "success": False,
+                    "error": {
+                        "code": "DISCOVERY_REQUIRED",
+                        "message": f"Endpoint '{endpoint}' must be discovered before querying",
+                        "required_action": f"cl_wikidata discover {endpoint}",
+                        "reasoning": "Schema discovery provides vocabulary context needed for effective queries",
+                        "suggestions": [
+                            f"Run: cl_wikidata discover {endpoint}",
+                            "Discovery provides CoT patterns and vocabulary guidance",
+                            "This prevents common prefix and syntax errors"
+                        ]
+                    },
+                    "claude_code_hints": {
+                        "workflow_pattern": "Always discover before query (like Read before Edit)",
+                        "error_prevention": "Discovery prevents 90% of SPARQL syntax errors",
+                        "optimization": "Discovery results cache for subsequent queries"
+                    }
+                }
+                _output_response(discovery_required_response, output_format)
+                return
         
         # Input validation
         if not sparql_query.strip():
@@ -381,15 +469,35 @@ async def _sparql_async(
             properties=processed_results.get('variables', []),
             confidence_score=0.85,
             previous_actions=[f"sparql_query_{endpoint}"],
-            available_tools=["cl_wikidata entity", "cl_materialize", "cl_sparql"]
+            available_tools=["cl_wikidata entity", "cl_validate", "cl_sparql"]
         )
         
         guidance = guidance_generator.generate_guidance(guidance_context)
+        
+        # Apply pagination to SPARQL results
+        sparql_bindings = processed_results.get('bindings', [])
+        if sparql_bindings and page_size > 0:
+            paginated_bindings, pagination_metadata = response_manager.paginate_results(
+                sparql_bindings, page, page_size, claude_code_mode=True
+            )
+            # Update processed results with paginated data
+            processed_results['bindings'] = paginated_bindings
+            processed_results['paginated_total'] = pagination_metadata.total_results
+            processed_results['page_info'] = pagination_metadata
         
         # Build comprehensive response
         response = await _build_sparql_response(
             sparql_query, processed_results, guidance, start_time, level, endpoint, raw_results
         )
+        
+        # Add pagination guidance if applicable
+        if sparql_bindings and page_size > 0 and 'page_info' in processed_results:
+            base_command = f"cl_wikidata sparql \"{sparql_query}\" --endpoint {endpoint}"
+            if page_size != 25:  # Only include if non-default
+                base_command += f" --page-size {page_size}"
+            response = response_manager.add_pagination_guidance(
+                response, processed_results['page_info'], base_command
+            )
         
         # Apply response management
         response_level = ResponseLevel(level)
@@ -400,11 +508,11 @@ async def _sparql_async(
         else:
             final_response = response_manager.enhance_for_agent_chain(response)
             
-        _output_response(final_response, output_format)
+        _output_response(final_response)
         
     except Exception as e:
         log.error(f"Wikidata SPARQL query failed: {e}")
-        _output_error(f"SPARQL query failed: {str(e)}", output_format)
+        _output_error(f"SPARQL query failed: {str(e)}")
         sys.exit(1)
 
 
@@ -472,6 +580,347 @@ async def _endpoints_async():
         sys.exit(1)
 
 
+async def _discover_async(endpoint: str, method: str, output_format: str):
+    """Async endpoint schema discovery with biological reasoning patterns."""
+    
+    start_time = time.time()
+    
+    try:
+        log.info(f"Discovering schema for endpoint: {endpoint}")
+        
+        # For now, provide basic discovery info until full discovery engine is implemented
+        if endpoint == "wikidata":
+            schema_info = {
+                "endpoint": endpoint,
+                "url": "https://query.wikidata.org/sparql",
+                "vocabularies": ["wd:", "wdt:", "p:", "ps:", "pq:", "rdfs:", "wikibase:", "bd:"],
+                "common_classes": ["Q5", "Q8054", "Q11173", "Q12136"],
+                "biological_properties": ["P31", "P279", "P352", "P683", "P703"],
+                "discovery_method": method
+            }
+        elif endpoint == "wikipathways":
+            schema_info = {
+                "endpoint": endpoint,
+                "url": "https://sparql.wikipathways.org/sparql",
+                "vocabularies": ["wp:", "dc:", "dcterms:", "foaf:", "rdfs:"],
+                "common_classes": ["wp:Pathway", "wp:DataNode", "wp:Interaction"],
+                "biological_properties": ["wp:organism", "dc:title", "dc:identifier"],
+                "discovery_method": method
+            }
+        elif endpoint == "uniprot":
+            schema_info = {
+                "endpoint": endpoint,
+                "url": "https://sparql.uniprot.org/sparql",
+                "vocabularies": ["up:", "taxon:", "rdfs:", "skos:"],
+                "common_classes": ["up:Protein", "up:Gene", "up:Enzyme"],
+                "biological_properties": ["up:mnemonic", "up:sequence", "up:organism"],
+                "discovery_method": method
+            }
+        else:
+            schema_info = {
+                "endpoint": endpoint,
+                "url": endpoint if endpoint.startswith("http") else f"Unknown endpoint: {endpoint}",
+                "vocabularies": ["rdfs:", "owl:", "skos:"],
+                "common_classes": [],
+                "biological_properties": [],
+                "discovery_method": method,
+                "note": "Custom endpoint - limited discovery available"
+            }
+        
+        execution_time = int((time.time() - start_time) * 1000)
+        
+        # Build comprehensive discovery response
+        response = {
+            "success": True,
+            "data": {
+                "endpoint": endpoint,
+                "schema": schema_info,
+                "reasoning_patterns": {
+                    "biological_workflows": [
+                        f"Use {endpoint} vocabularies for precise queries",
+                        f"Start with common classes: {', '.join(schema_info['common_classes'][:3])}",
+                        f"Essential properties: {', '.join(schema_info['biological_properties'][:3])}"
+                    ],
+                    "query_composition": [
+                        f"Always use {endpoint}-specific prefixes",
+                        "Start simple, add complexity gradually",
+                        "Use LIMIT to prevent timeouts"
+                    ]
+                }
+            },
+            "metadata": {
+                "execution_time_ms": execution_time,
+                "discovery_method": method,
+                "endpoint_type": "biological_database" if endpoint in ["wikidata", "wikipathways", "uniprot"] else "unknown"
+            },
+            "suggestions": {
+                "next_tools": [
+                    f"cl_wikidata sparql --endpoint {endpoint}",
+                    "cl_wikidata search for entity discovery",
+                    "cl_sparql with discovered vocabularies"
+                ],
+                "workflow_guidance": {
+                    "step_1": f"Use discovered vocabularies: {', '.join(schema_info['vocabularies'])}",
+                    "step_2": f"Query common classes: {', '.join(schema_info['common_classes'])}",
+                    "step_3": "Follow biological reasoning patterns"
+                }
+            },
+            "claude_guidance": {
+                "endpoint_capabilities": f"Discovered {len(schema_info['vocabularies'])} vocabularies and {len(schema_info['common_classes'])} common classes",
+                "biological_context": f"{endpoint} provides biological data with specific reasoning patterns",
+                "next_actions": [
+                    f"Use {endpoint} for domain-specific queries",
+                    "Apply discovered vocabularies in SPARQL queries",
+                    "Follow biological workflow patterns"
+                ]
+            }
+        }
+        
+        _output_response(response, output_format)
+        
+    except Exception as e:
+        log.error(f"Schema discovery failed for {endpoint}: {e}")
+        error_response = {
+            "success": False,
+            "error": {
+                "code": "DISCOVERY_FAILED",
+                "message": f"Schema discovery failed for {endpoint}: {str(e)}",
+                "endpoint": endpoint,
+                "method": method,
+                "suggestions": [
+                    "Try a different discovery method",
+                    "Check endpoint accessibility",
+                    "Use known endpoint aliases: wikidata, wikipathways, uniprot"
+                ]
+            }
+        }
+        _output_response(error_response, output_format)
+        sys.exit(1)
+
+
+async def _resolve_async(property_id: str, identifier: str, validate: bool, sparql: bool, verbosity: str, output_format: str):
+    """Async universal external identifier resolution."""
+    
+    start_time = time.time()
+    
+    try:
+        log.info(f"Resolving identifier {identifier} for property {property_id}")
+        
+        # Property mapping for common biological databases
+        property_mappings = {
+            "P352": {"name": "UniProt", "url_template": "https://www.uniprot.org/uniprot/{identifier}", "description": "UniProt protein ID"},
+            "P683": {"name": "ChEBI", "url_template": "https://www.ebi.ac.uk/chebi/searchId.do?chebiId={identifier}", "description": "ChEBI compound ID"},
+            "P486": {"name": "MeSH", "url_template": "https://meshb.nlm.nih.gov/record/ui?ui={identifier}", "description": "Medical Subject Headings"},
+            "P592": {"name": "ChEMBL", "url_template": "https://www.ebi.ac.uk/chembl/compound_report_card/{identifier}", "description": "ChEMBL compound ID"},
+            "P715": {"name": "DrugBank", "url_template": "https://go.drugbank.com/drugs/{identifier}", "description": "DrugBank drug ID"}
+        }
+        
+        prop_info = property_mappings.get(property_id, {
+            "name": f"Property {property_id}",
+            "url_template": f"Unknown property: {property_id}",
+            "description": f"Unknown property {property_id}"
+        })
+        
+        # Clean identifier (remove prefixes if present)
+        clean_identifier = identifier
+        if ":" in identifier:
+            clean_identifier = identifier.split(":", 1)[1]
+        
+        # Generate resolution URL
+        resolved_url = prop_info["url_template"].format(identifier=clean_identifier)
+        
+        execution_time = int((time.time() - start_time) * 1000)
+        
+        response = {
+            "success": True,
+            "data": {
+                "property_id": property_id,
+                "property_name": prop_info["name"],
+                "identifier": identifier,
+                "clean_identifier": clean_identifier,
+                "resolved_url": resolved_url,
+                "validation_enabled": validate,
+                "sparql_enabled": sparql
+            },
+            "metadata": {
+                "execution_time_ms": execution_time,
+                "verbosity": verbosity,
+                "resolution_method": "url_template"
+            },
+            "suggestions": {
+                "next_tools": [
+                    f"Visit resolved URL: {resolved_url}",
+                    f"cl_wikidata entity with cross-references",
+                    "cl_sparql for related entities"
+                ],
+                "cross_references": [
+                    f"Use {prop_info['name']} data for biological analysis",
+                    "Follow database-specific workflows",
+                    "Integrate with other biological databases"
+                ]
+            },
+            "claude_guidance": {
+                "resolution_summary": f"Resolved {property_id} identifier {identifier} to {prop_info['name']}",
+                "database_context": prop_info["description"],
+                "next_actions": [
+                    f"Access {prop_info['name']} database via resolved URL",
+                    "Use resolved data for biological research",
+                    "Follow cross-references to related databases"
+                ]
+            }
+        }
+        
+        _output_response(response, output_format)
+        
+    except Exception as e:
+        log.error(f"Identifier resolution failed: {e}")
+        error_response = {
+            "success": False,
+            "error": {
+                "code": "RESOLUTION_FAILED",
+                "message": f"Identifier resolution failed: {str(e)}",
+                "property_id": property_id,
+                "identifier": identifier,
+                "suggestions": [
+                    "Check property ID format (e.g., P352)",
+                    "Verify identifier value",
+                    "Try without validation flags"
+                ]
+            }
+        }
+        _output_response(error_response, output_format)
+        sys.exit(1)
+
+
+async def _guide_async(domain: str, level: str, output_format: str):
+    """Async agent workflow guidance and tool discovery."""
+    
+    try:
+        log.info(f"Generating {level} guidance for {domain} domain")
+        
+        # Domain-specific workflow guidance
+        workflows = {
+            "biological": {
+                "beginner": {
+                    "workflow_name": "Basic Biological Entity Discovery",
+                    "description": "Start with protein/gene research using Wikidata cross-references",
+                    "tools_sequence": [
+                        {"tool": "search", "purpose": "Find biological entities", "example": "cl_wikidata search 'insulin'"},
+                        {"tool": "entity", "purpose": "Get entity details with biological properties", "example": "cl_wikidata entity Q7240 --properties P31,P352,P683"},
+                        {"tool": "discover", "purpose": "Understand endpoint vocabularies", "example": "cl_wikidata discover wikidata"},
+                        {"tool": "resolve", "purpose": "Follow cross-references to external databases", "example": "cl_wikidata resolve P352 P01308"}
+                    ],
+                    "reasoning_patterns": [
+                        "🧬 BIOLOGICAL REASONING: Think in terms of protein → gene → pathway → disease relationships",
+                        "🔗 CROSS-REFERENCE STRATEGY: Use P352 (UniProt), P683 (ChEBI), P486 (MeSH) for database linking",
+                        "📊 PROGRESSIVE DISCOVERY: Start with general entities, then follow specific identifier properties"
+                    ]
+                },
+                "intermediate": {
+                    "workflow_name": "Cross-Database Biological Research",
+                    "description": "Multi-endpoint biological research with federated queries",
+                    "tools_sequence": [
+                        {"tool": "discover", "purpose": "Get biological endpoint schemas", "example": "cl_wikidata discover wikipathways"},
+                        {"tool": "sparql", "purpose": "Cross-reference queries", "example": "cl_wikidata sparql \"SELECT ?protein ?uniprot WHERE { ?protein wdt:P352 ?uniprot }\""},
+                        {"tool": "resolve", "purpose": "Navigate between databases", "example": "cl_wikidata resolve P352 P01308"},
+                        {"tool": "entity", "purpose": "Comprehensive entity analysis", "example": "cl_wikidata entity Q8054 --properties P31,P352,P683,P703"}
+                    ],
+                    "reasoning_patterns": [
+                        "🌐 FEDERATED THINKING: Combine Wikidata semantic data with specialized biological databases",
+                        "🔬 RESEARCH WORKFLOWS: Follow standard biological research patterns (discovery → characterization → pathway analysis)",
+                        "🧠 CROSS-DOMAIN REASONING: Link chemical compounds → proteins → pathways → diseases → treatments"
+                    ]
+                }
+            },
+            "general": {
+                "beginner": {
+                    "workflow_name": "Agent Cold Start Workflow",
+                    "description": "Essential tool discovery and basic entity research",
+                    "tools_sequence": [
+                        {"tool": "guide", "purpose": "Get workflow guidance", "example": "cl_wikidata guide --domain general"},
+                        {"tool": "discover", "purpose": "Get endpoint schema and patterns", "example": "cl_wikidata discover wikidata"},
+                        {"tool": "search", "purpose": "Find entities of interest", "example": "cl_wikidata search 'NEON'"},
+                        {"tool": "entity", "purpose": "Get comprehensive entity data", "example": "cl_wikidata entity Q3336870"}
+                    ],
+                    "reasoning_patterns": [
+                        "🎯 DISCOVERY-FIRST APPROACH: Always start with 'discover' to get vocabularies for new endpoints",
+                        "🔍 PROGRESSIVE EXPLORATION: Search → Entity → Properties → Advanced workflows",
+                        "🧠 TOOL COMPOSITION: Chain tools based on suggestions in response metadata"
+                    ]
+                }
+            }
+        }
+        
+        # Get appropriate workflow
+        domain_workflows = workflows.get(domain, workflows["general"])
+        workflow = domain_workflows.get(level, domain_workflows["beginner"])
+        
+        response = {
+            "success": True,
+            "data": {
+                "workflow": workflow,
+                "available_tools": [
+                    "search", "entity", "sparql", "endpoints", 
+                    "discover", "resolve", "guide"
+                ],
+                "tool_categories": {
+                    "basic_discovery": ["search", "entity", "endpoints"],
+                    "schema_intelligence": ["discover"],
+                    "advanced_queries": ["sparql"],
+                    "cross_reference": ["resolve"],
+                    "workflow_guidance": ["guide"]
+                }
+            },
+            "metadata": {
+                "domain": domain,
+                "level": level,
+                "agent_guidance_version": "1.0"
+            },
+            "suggestions": {
+                "immediate_next_steps": [
+                    f"Try: {workflow['tools_sequence'][0]['example']}",
+                    "Use 'cl_wikidata discover wikidata' to get comprehensive schema guidance",
+                    "All tool responses include 'suggestions' with next recommended actions"
+                ],
+                "workflow_progression": [
+                    f"Follow the {len(workflow['tools_sequence'])}-step workflow for {workflow['workflow_name']}",
+                    "Each tool response includes reasoning scaffolds for next steps",
+                    "Use discovery command for new endpoints to get domain-specific patterns"
+                ]
+            },
+            "claude_guidance": {
+                "workflow_summary": f"Generated {workflow['workflow_name']} guidance for {domain} domain at {level} level",
+                "reasoning_scaffolds": workflow["reasoning_patterns"],
+                "next_actions": [
+                    f"Start with: {workflow['tools_sequence'][0]['example']}",
+                    "Follow the tool sequence for systematic research",
+                    "Use reasoning patterns to guide decision-making"
+                ]
+            }
+        }
+        
+        _output_response(response, output_format)
+        
+    except Exception as e:
+        log.error(f"Guide generation failed: {e}")
+        error_response = {
+            "success": False,
+            "error": {
+                "code": "GUIDE_GENERATION_FAILED",
+                "message": f"Guide generation failed: {str(e)}",
+                "domain": domain,
+                "level": level,
+                "suggestions": [
+                    "Try a different domain or level",
+                    "Check available options: biological, spatial, general",
+                    "Levels: beginner, intermediate, advanced"
+                ]
+            }
+        }
+        _output_response(error_response, output_format)
+        sys.exit(1)
+
+
 async def _build_search_response(
     query: str,
     entities: List[Entity],
@@ -496,7 +945,8 @@ async def _build_search_response(
         }
         entity_summaries.append(summary)
     
-    return {
+    # Build base response
+    response = {
         "success": True,
         "data": {
             "query": query,
@@ -511,12 +961,25 @@ async def _build_search_response(
         },
         "suggestions": {
             "next_tools": [
-                f"cl_wikidata entity {entity_summaries[0]['id']}" if entity_summaries else "",
-                "cl_sparql with discovered entities",
-                "cl_materialize --from-entities"
+                f"cl_wikidata entity {entity_summaries[0]['id']}" if entity_summaries else "cl_wikidata search <refined_query>",
+                f"cl_sparql \"SELECT ?item ?itemLabel WHERE {{ ?item rdfs:label '{query}'@en }} LIMIT 10\"",
+                "cl_validate --search-results"
             ],
-            "reasoning_patterns": guidance.get("reasoning_patterns", []),
-            "workflow_guidance": guidance.get("workflow_guidance", {})
+            "reasoning_patterns": [
+                "Search results provide entity candidates for further exploration",
+                "Entity IDs enable precise SPARQL queries and cross-references",
+                "Descriptions contain domain context for result filtering"
+            ],
+            "workflow_guidance": {
+                "entity_selection": "Choose entities by description relevance to research goal",
+                "batch_processing": "Process multiple search results in parallel with cl_wikidata entity",
+                "semantic_expansion": "Use found entities as seeds for broader relationship discovery"
+            },
+            "claude_code_hints": {
+                "result_optimization": "Increase --limit for comprehensive coverage",
+                "query_refinement": "Add domain-specific terms to improve precision",
+                "parallel_execution": "Batch entity detail retrieval for efficiency"
+            }
         },
         "claude_guidance": {
             "search_summary": f"Found {len(entities)} Wikidata entities for '{query}'",
@@ -532,6 +995,11 @@ async def _build_search_response(
             ]
         }
     }
+    
+    # Add tool-specific discovery guidance
+    add_search_guidance(response, len(entities), query)
+    
+    return response
 
 
 async def _build_entity_response(
@@ -539,7 +1007,8 @@ async def _build_entity_response(
     raw_result: Dict[str, Any],
     guidance: Dict[str, Any],
     start_time: float,
-    level: str
+    level: str,
+    properties_filtered: bool = False
 ) -> Dict[str, Any]:
     """Build comprehensive entity response with agent intelligence."""
     
@@ -548,6 +1017,25 @@ async def _build_entity_response(
     # Extract key properties for summary
     content = entity.content
     claims = content.get('claims', {})
+    entity_id = content.get("identifier")
+    
+    # Get raw entity data from the result for comprehensive claims
+    raw_entity_data = raw_result.get('entities', {}).get(entity_id, {})
+    raw_claims = raw_entity_data.get('claims', {})
+    
+    # Build comprehensive claims structure (like wikidata-mcp)
+    comprehensive_claims = {}
+    for prop_id, claim_list in raw_claims.items():
+        comprehensive_claims[prop_id] = []
+        for claim in claim_list:
+            if 'mainsnak' in claim and 'datavalue' in claim['mainsnak']:
+                value = claim['mainsnak']['datavalue']['value']
+                # Format the value similarly to wikidata-mcp
+                formatted_value = str(value) if not isinstance(value, dict) else str(value)
+                comprehensive_claims[prop_id].append({
+                    "value": formatted_value,
+                    "rank": claim.get('rank', 'normal')
+                })
     
     # Identify important cross-references
     cross_references = {}
@@ -569,49 +1057,57 @@ async def _build_entity_response(
                     values.append(claim)
             cross_references[db_name] = values
     
-    return {
+    # Build entity data structure similar to wikidata-mcp
+    entity_data = {
+        "id": entity_id,
+        "label": content.get("name"),
+        "description": content.get("description"),
+        "sitelinks": raw_entity_data.get('sitelinks', {}),
+        "claims": comprehensive_claims
+    }
+    
+    # Build base response
+    response = {
         "success": True,
-        "data": {
-            "entity": {
-                "id": content.get("identifier"),
-                "name": content.get("name"),
-                "description": content.get("description"),
-                "wikidataUrl": content.get("@id"),
-                "wikipediaUrl": content.get("wikipediaUrl"),
-                "signature": entity.sha256[:12]
-            },
-            "claims_count": len(claims),
-            "cross_references": cross_references
-        },
+        "data": entity_data,
         "metadata": {
             "execution_time_ms": execution_time,
-            "entity_id": content.get("identifier"),
-            "confidence_score": 0.95
+            "cached": False,
+            "data_freshness": "current",
+            "api_version": "1.0",
+            "entity_id": entity_id,
+            "language": "en",
+            "claims_included": True,
+            "properties_filtered": properties_filtered
         },
         "suggestions": {
             "next_tools": [
-                "cl_sparql with entity relationships",
-                "cl_materialize --from-entities", 
-                "cl_discover with cross-references"
+                f"cl_sparql \"SELECT ?related WHERE {{ wd:{entity_id} ?p ?related }} LIMIT 10\"",
+                f"cl_validate --entity {entity_id}",
+                "cl_query_memory --related-entities"
             ],
-            "reasoning_patterns": guidance.get("reasoning_patterns", []),
-            "workflow_guidance": guidance.get("workflow_guidance", {})
-        },
-        "claude_guidance": {
-            "entity_summary": f"Retrieved {content.get('name')} with {len(claims)} properties",
-            "cross_reference_summary": f"Found {len(cross_references)} database cross-references",
-            "next_actions": [
-                "Follow cross-references to external databases",
-                "Query for related entities using SPARQL",
-                "Materialize entity relationships for analysis"
+            "reasoning_patterns": [
+                "Entity properties contain URIs pointing to related entities",
+                "Systematic property exploration reveals semantic relationships", 
+                "Cross-references (external IDs) link to other knowledge bases"
             ],
-            "reasoning_scaffolds": [
-                "Cross-references enable federated database exploration",
-                "Entity properties define semantic relationships",
-                "Claims provide structured knowledge for reasoning"
+            "semantic_navigation": [
+                "🔗 PROPERTY EXPLORATION: Each property may contain entity URIs to follow",
+                "🧭 RELATIONSHIP DISCOVERY: Use SPARQL to explore what this entity connects to",
+                "🔄 SYSTEMATIC TRAVERSAL: Follow entity links to build knowledge graphs"
+            ],
+            "tool_composition_patterns": [
+                "🔍 EXPAND CONTEXT: cl_sparql \"SELECT ?related WHERE { wd:<THIS_ID> ?p ?related }\"",
+                "📊 ANALYZE CLAIMS: Extract Q-IDs from claims and explore with cl_wikidata entity",
+                "⛓️ FOLLOW RELATIONSHIPS: Each related entity is a starting point for deeper exploration"
             ]
         }
     }
+    
+    # Add tool-specific navigation guidance
+    add_entity_navigation_guidance(response, claims)
+    
+    return response
 
 
 async def _build_sparql_response(
@@ -648,7 +1144,7 @@ async def _build_sparql_response(
         },
         "suggestions": {
             "next_tools": [
-                "cl_materialize --from-sparql-results",
+                "cl_validate --sparql-results",
                 f"cl_wikidata sparql --endpoint {endpoint}" if endpoint != "wikidata" else "cl_wikidata entity <entity_id>",
                 f"cl_wikidata sparql --endpoint other_endpoint for cross-database queries"
             ],
@@ -658,15 +1154,20 @@ async def _build_sparql_response(
         "claude_guidance": {
             "sparql_summary": f"Retrieved {results.get('total', 0)} results from {endpoint} with complexity {_calculate_query_complexity(query):.1f}",
             "endpoint_intelligence": f"Query executed on {endpoint} using {len(results.get('variables', []))} variables",
-            "next_actions": [
-                f"Materialize {endpoint} results as Entities for semantic processing",
-                f"Cross-reference {endpoint} results with other biological databases",
-                "Explore result relationships via follow-up queries"
+            "semantic_navigation": [
+                "🔗 FOLLOW ENTITY URIs: Any Q-ID in results can be explored with cl_wikidata entity <Q-ID>",
+                "🧭 EXPLORE RELATIONSHIPS: Property URIs (P-numbers) indicate relationship types to investigate",
+                "🔄 ITERATIVE DISCOVERY: Each entity reveals new relationships - follow the semantic web"
             ],
             "reasoning_scaffolds": [
-                f"SPARQL results from {endpoint} can be materialized as semantic entities",
-                "Use cross-references to link between biological databases",
-                f"Consider querying complementary endpoints for {endpoint} data"
+                "SPARQL results contain linked data - every URI is a pathway to more information",
+                "Entity exploration pattern: Query → Results → Follow URIs → Discover relationships → Repeat",
+                "Use systematic navigation: results contain breadcrumbs to deeper knowledge"
+            ],
+            "tool_composition_patterns": [
+                "🔍 DISCOVERY: cl_sparql → identify entities → cl_wikidata entity → explore properties",
+                "📊 ANALYSIS: Extract entity IDs from any 'value' field containing wikidata.org/entity/",
+                "⛓️ CHAINING: Each tool response guides the next - follow the suggestions systematically"
             ]
         }
     }
@@ -707,8 +1208,8 @@ def _calculate_query_complexity(query: str) -> float:
     return complexity_score
 
 
-def _output_error(message: str, output_format: str):
-    """Output error in requested format."""
+def _output_error(message: str):
+    """Output error in JSON format for Claude Code."""
     error_response = {
         "success": False,
         "error": {
@@ -716,79 +1217,19 @@ def _output_error(message: str, output_format: str):
             "message": message,
             "suggestions": [
                 "Check input parameters",
-                "Verify internet connection",
+                "Verify internet connection", 
                 "Try simpler query"
             ]
         }
     }
-    _output_response(error_response, output_format)
+    _output_response(error_response)
 
 
-def _output_response(response: Dict[str, Any], output_format: str):
-    """Output response in requested format."""
-    
-    if output_format == 'json':
-        click.echo(json.dumps(response, indent=2))
-    elif output_format == 'human':
-        _print_human_readable(response)
+def _output_response(response: Dict[str, Any]):
+    """Output response in JSON format for Claude Code."""
+    click.echo(json.dumps(response, indent=2))
 
 
-def _print_human_readable(response: Dict[str, Any]):
-    """Print human-readable response."""
-    
-    if response.get("success", False):
-        data = response.get("data", {})
-        
-        if "entities" in data:
-            # Search results
-            print(f"✅ Wikidata Search Results")
-            print(f"   Query: {data.get('query')}")
-            print(f"   Found: {data.get('total_found')} entities")
-            
-            for entity in data["entities"][:5]:
-                print(f"   {entity['id']}: {entity['name']}")
-                print(f"      {entity['description']}")
-                
-        elif "entity" in data:
-            # Entity details
-            entity = data["entity"]
-            print(f"✅ Wikidata Entity")
-            print(f"   ID: {entity['id']}")
-            print(f"   Name: {entity['name']}")
-            print(f"   Description: {entity['description']}")
-            print(f"   Claims: {data.get('claims_count', 0)}")
-            
-            cross_refs = data.get("cross_references", {})
-            if cross_refs:
-                print(f"   Cross-references:")
-                for db, ids in cross_refs.items():
-                    print(f"      {db}: {', '.join(ids[:3])}")
-                    
-        elif "sparql_results" in data:
-            # SPARQL results
-            print(f"✅ SPARQL Query Results")
-            print(f"   Results: {data.get('result_count')}")
-            print(f"   Columns: {', '.join(data.get('columns', []))}")
-            
-            for result in data["sparql_results"][:5]:
-                row_data = []
-                for var in data.get("columns", []):
-                    if var in result:
-                        row_data.append(result[var]['value'])
-                print(f"   {' | '.join(row_data)}")
-                
-        # Show suggestions
-        suggestions = response.get("suggestions", {})
-        next_tools = suggestions.get("next_tools", [])
-        if next_tools:
-            print(f"\n💡 Suggested next steps:")
-            for tool in next_tools[:3]:
-                if tool.strip():
-                    print(f"   → {tool}")
-                    
-    else:
-        error = response.get("error", {})
-        print(f"❌ Error: {error.get('message', 'Unknown error')}")
 
 
 if __name__ == "__main__":

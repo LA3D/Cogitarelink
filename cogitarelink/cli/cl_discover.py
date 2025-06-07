@@ -39,6 +39,8 @@ log = get_logger("cl_discover")
 @click.option('--materialize', is_flag=True, help='Auto-materialize discovered resource as Entity')
 @click.option('--format', 'output_format', type=click.Choice(['json', 'human']), 
               default='json', help='Output format')
+@click.option('--timeout', type=int, default=30, 
+              help='Discovery timeout in seconds (default: 30)')
 def discover(
     resource_identifier: str,
     domains: List[str],
@@ -48,7 +50,8 @@ def discover(
     enhance: bool,
     level: str,
     materialize: bool,
-    output_format: str
+    output_format: str,
+    timeout: int
 ):
     """
     Discover metadata about a scientific resource or SPARQL endpoint schema.
@@ -66,7 +69,7 @@ def discover(
     """
     asyncio.run(_discover_async(
         resource_identifier, domains, endpoint, method, context_id, enhance, 
-        level, materialize, output_format
+        level, materialize, output_format, timeout
     ))
 
 async def _discover_async(
@@ -78,7 +81,8 @@ async def _discover_async(
     enhance: bool,
     level: str,
     materialize: bool,
-    output_format: str
+    output_format: str,
+    timeout: int
 ):
     """Async implementation of discovery with endpoint schema and resource intelligence."""
     
@@ -254,7 +258,7 @@ def _build_agent_response(
             "use_context_id": discovery_result.context_id,
             "recommended_next_tools": [
                 f"cl_sparql --context-id {discovery_result.context_id}",
-                f"cl_materialize --context-id {discovery_result.context_id}",
+                f"cl_validate --context-id {discovery_result.context_id}",
                 f"cl_validate --context-id {discovery_result.context_id}"
             ]
         }
@@ -346,15 +350,17 @@ async def _endpoint_schema_discovery(
     try:
         log.info(f"Starting schema discovery for {endpoint}")
         
-        # Execute schema discovery
-        schema = await schema_discovery_engine.discover_schema(
+        # Execute schema discovery with custom timeout
+        from ..intelligence.schema_discovery import SchemaDiscoveryEngine
+        custom_discovery_engine = SchemaDiscoveryEngine(timeout=timeout)
+        schema = await custom_discovery_engine.discover_schema(
             endpoint=endpoint,
             method=method,
             include_examples=True
         )
         
         # Generate agent guidance
-        guidance = schema_discovery_engine.generate_agent_guidance(schema)
+        guidance = custom_discovery_engine.generate_agent_guidance(schema)
         
         # Build comprehensive response
         execution_time = int((time.time() - start_time) * 1000)
@@ -390,7 +396,7 @@ async def _endpoint_schema_discovery(
                 ],
                 "sparql_patterns": [
                     f"cl_wikidata sparql \"<query>\" --endpoint {schema.endpoint}",
-                    f"cl_materialize --from-sparql-results",
+                    f"cl_validate --sparql-results",
                     "cl_wikidata endpoints (list all available endpoints)"
                 ]
             },
