@@ -67,7 +67,7 @@ async def _follow_async(entity_id: str, databases: List[str], resolve_urls: bool
         entity_info = entity_data['entities'][entity_id]
         
         # Extract cross-references
-        cross_references, metadata = _extract_cross_references(entity_info, databases)
+        cross_references, metadata = await _extract_cross_references(entity_info, databases)
         
         # Add URLs if requested
         if resolve_urls:
@@ -111,58 +111,98 @@ async def _follow_async(entity_id: str, databases: List[str], resolve_urls: bool
         sys.exit(1)
 
 
-def _extract_cross_references(entity_info: Dict[str, Any], target_databases: List[str]) -> tuple[Dict[str, List[str]], Dict[str, Dict[str, Any]]]:
-    """Extract cross-references from Wikidata entity."""
+async def _extract_cross_references(entity_info: Dict[str, Any], target_databases: List[str]) -> tuple[Dict[str, List[str]], Dict[str, Dict[str, Any]]]:
+    """Extract cross-references using dynamic external identifier discovery."""
     
-    # Database property mappings (Wikidata property ID -> database name)
-    database_properties = {
-        'P352': 'uniprot',      # UniProt protein ID
-        'P683': 'chebi',        # ChEBI ID
-        'P231': 'cas',          # CAS Registry Number
-        'P592': 'chembl',       # ChEMBL ID
-        'P715': 'drugbank',     # DrugBank ID
-        'P486': 'mesh',         # MeSH descriptor ID
-        'P685': 'ncbi_gene',    # NCBI Gene ID
-        'P594': 'ensembl_gene', # Ensembl gene ID
-        'P637': 'refseq',       # RefSeq protein ID
-        'P699': 'disease_ontology', # Disease Ontology ID
-        'P665': 'kegg',         # KEGG ID
-        'P232': 'ec_number',    # EC number
-        'P662': 'pubchem_cid',  # PubChem CID
-        'P2017': 'isomeric_smiles', # isomeric SMILES
-        'P1579': 'pubchem_sid', # PubChem SID
-        'P638': 'pdb',          # Protein Data Bank ID
-    }
-    
-    claims = entity_info.get('claims', {})
-    cross_references = {}
-    metadata = {}
-    
-    # Process each relevant property
-    for prop_id, db_name in database_properties.items():
-        if prop_id in claims:
+    try:
+        # Use dynamic external identifier discovery
+        from ..core.external_ids import get_external_ids_for_entity
+        
+        entity_id = entity_info.get('id', '')
+        if not entity_id:
+            # Try to extract from the URI
+            entity_uri = entity_info.get('uri', '')
+            if entity_uri and '/entity/' in entity_uri:
+                entity_id = entity_uri.split('/entity/')[-1]
+            else:
+                return {}, {}
+        
+        # Get all external identifiers dynamically
+        external_ids = await get_external_ids_for_entity(entity_id)
+        
+        # Convert to cl_follow format and apply target database filtering
+        cross_references = {}
+        metadata = {}
+        
+        for db_name, db_data in external_ids.items():
             # Check if this database was requested (if specified)
             if target_databases and db_name not in target_databases:
                 continue
-                
-            values = []
-            for claim in claims[prop_id]:
-                if 'mainsnak' in claim and 'datavalue' in claim['mainsnak']:
-                    value = claim['mainsnak']['datavalue']['value']
-                    if isinstance(value, str):
-                        values.append(value)
-                    elif isinstance(value, dict) and 'text' in value:
-                        values.append(value['text'])
             
-            if values:
-                cross_references[db_name] = values
-                metadata[db_name] = {
-                    'property_id': prop_id,
-                    'count': len(values),
-                    'wikidata_property_url': f"https://www.wikidata.org/wiki/Property:{prop_id}"
-                }
-    
-    return cross_references, metadata
+            cross_references[db_name] = db_data['values']
+            metadata[db_name] = {
+                'property_id': db_data['property_id'],
+                'count': len(db_data['values']),
+                'wikidata_property_url': f"https://www.wikidata.org/wiki/Property:{db_data['property_id']}",
+                'formatter_url': db_data.get('formatter_url'),
+                'domain': db_data.get('domain')
+            }
+        
+        return cross_references, metadata
+        
+    except Exception as e:
+        log.warning(f"Dynamic external ID discovery failed, falling back to hardcoded: {e}")
+        
+        # Fallback to hardcoded mappings
+        database_properties = {
+            'P352': 'uniprot',      # UniProt protein ID
+            'P683': 'chebi',        # ChEBI ID
+            'P231': 'cas',          # CAS Registry Number
+            'P592': 'chembl',       # ChEMBL ID
+            'P715': 'drugbank',     # DrugBank ID
+            'P486': 'mesh',         # MeSH descriptor ID
+            'P685': 'ncbi_gene',    # NCBI Gene ID
+            'P594': 'ensembl_gene', # Ensembl gene ID
+            'P637': 'refseq',       # RefSeq protein ID
+            'P699': 'disease_ontology', # Disease Ontology ID
+            'P665': 'kegg',         # KEGG ID
+            'P232': 'ec_number',    # EC number
+            'P662': 'pubchem_cid',  # PubChem CID
+            'P2017': 'isomeric_smiles', # isomeric SMILES
+            'P1579': 'pubchem_sid', # PubChem SID
+            'P638': 'pdb',          # Protein Data Bank ID
+            'P2410': 'wikipathways', # WikiPathways ID
+        }
+        
+        claims = entity_info.get('claims', {})
+        cross_references = {}
+        metadata = {}
+        
+        # Process each relevant property
+        for prop_id, db_name in database_properties.items():
+            if prop_id in claims:
+                # Check if this database was requested (if specified)
+                if target_databases and db_name not in target_databases:
+                    continue
+                    
+                values = []
+                for claim in claims[prop_id]:
+                    if 'mainsnak' in claim and 'datavalue' in claim['mainsnak']:
+                        value = claim['mainsnak']['datavalue']['value']
+                        if isinstance(value, str):
+                            values.append(value)
+                        elif isinstance(value, dict) and 'text' in value:
+                            values.append(value['text'])
+                
+                if values:
+                    cross_references[db_name] = values
+                    metadata[db_name] = {
+                        'property_id': prop_id,
+                        'count': len(values),
+                        'wikidata_property_url': f"https://www.wikidata.org/wiki/Property:{prop_id}"
+                    }
+        
+        return cross_references, metadata
 
 
 def _add_urls_to_cross_references(cross_references: Dict[str, List[str]]):
@@ -182,7 +222,8 @@ def _add_urls_to_cross_references(cross_references: Dict[str, List[str]]):
         'kegg': 'https://www.kegg.jp/entry/{id}',
         'pubchem_cid': 'https://pubchem.ncbi.nlm.nih.gov/compound/{id}',
         'pubchem_sid': 'https://pubchem.ncbi.nlm.nih.gov/substance/{id}',
-        'pdb': 'https://www.rcsb.org/structure/{id}'
+        'pdb': 'https://www.rcsb.org/structure/{id}',
+        'wikipathways': 'https://www.wikipathways.org/pathways/{id}.html'
     }
     
     for db_name, identifiers in cross_references.items():

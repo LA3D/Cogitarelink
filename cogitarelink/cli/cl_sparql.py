@@ -84,7 +84,7 @@ async def _sparql_async(query: str, endpoint: str, timeout: int, max_limit: int)
     
     try:
         # Apply query guardrails
-        safe_query, guardrail_warnings = _apply_query_guardrails(query, max_limit)
+        safe_query, guardrail_warnings = await _apply_query_guardrails(query, max_limit, endpoint)
         
         # Block dangerous queries
         if not _is_query_safe(safe_query):
@@ -142,7 +142,7 @@ async def _sparql_async(query: str, endpoint: str, timeout: int, max_limit: int)
         sys.exit(1)
 
 
-def _apply_query_guardrails(query: str, max_limit: int) -> tuple[str, List[str]]:
+async def _apply_query_guardrails(query: str, max_limit: int, endpoint: str = None) -> tuple[str, List[str]]:
     """Apply enhanced safety guardrails to SPARQL query."""
     
     warnings = []
@@ -172,14 +172,33 @@ def _apply_query_guardrails(query: str, max_limit: int) -> tuple[str, List[str]]
             safe_query = re.sub(r'LIMIT\s+\d+', 'LIMIT 1000', safe_query, flags=re.IGNORECASE)
             warnings.append(f"Reduced LIMIT from {limit_value} to 1000")
     
-    # 5. Check for missing prefixes (basic discovery hint)
+    # 5. Check for missing prefixes using discovered vocabularies
     entities = SPARQL_PATTERNS['entities'].findall(safe_query)
     prefixed_entities = [entity for full, prefixed in entities if prefixed for entity in [prefixed]]
-    if prefixed_entities:
-        unknown_prefixes = set(entity.split(':')[0] for entity in prefixed_entities 
-                             if ':' in entity and not entity.startswith('http'))
-        if unknown_prefixes:
-            warnings.append(f"Unknown prefixes detected: {', '.join(unknown_prefixes)}")
+    if prefixed_entities and endpoint:
+        # Get discovered prefixes for this endpoint
+        try:
+            sparql_client = get_sparql_client()
+            endpoint_url = sparql_client._resolve_endpoint_url(endpoint)
+            discovered_prefixes = await sparql_client._get_discovered_prefixes(endpoint_url)
+            
+            # Check which prefixes are actually unknown
+            used_prefixes = set(entity.split(':')[0] for entity in prefixed_entities 
+                              if ':' in entity and not entity.startswith('http'))
+            unknown_prefixes = used_prefixes - set(discovered_prefixes.keys())
+            
+            if unknown_prefixes:
+                warnings.append(f"Unknown prefixes detected: {', '.join(unknown_prefixes)}")
+            elif used_prefixes:
+                # All prefixes are known - this is good!
+                known_count = len(used_prefixes)
+                warnings.append(f"Using {known_count} discovered prefixes: {', '.join(used_prefixes)}")
+        except Exception as e:
+            # Fallback to basic prefix detection if discovery fails
+            unknown_prefixes = set(entity.split(':')[0] for entity in prefixed_entities 
+                                 if ':' in entity and not entity.startswith('http'))
+            if unknown_prefixes:
+                warnings.append(f"Prefixes detected (discovery failed): {', '.join(unknown_prefixes)}")
     
     return safe_query, warnings
 

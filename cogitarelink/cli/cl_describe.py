@@ -16,7 +16,6 @@ from typing import Optional, List, Dict, Any
 import click
 
 from ..adapters.wikidata_client import WikidataClient
-from ..adapters.unified_sparql_client import get_sparql_client
 from ..core.debug import get_logger
 
 log = get_logger("cl_describe")
@@ -126,22 +125,67 @@ def _build_entity_description(entity_info: Dict[str, Any], entity_id: str) -> Di
 
 
 async def _extract_cross_references(entity_info: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract cross-references to external databases with dynamic property discovery."""
+    """Extract cross-references using dynamic external identifier discovery."""
     
-    claims = entity_info.get('claims', {})
-    cross_refs = {}
-    coordinates = None
-    
-    # Get all external identifier properties present in this entity
-    external_id_properties = [prop_id for prop_id in claims.keys() if prop_id.startswith('P')]
-    
-    if external_id_properties:
-        # Get dynamic property metadata from Wikidata
-        property_metadata = await _get_property_metadata(external_id_properties)
+    try:
+        # Use dynamic external identifier discovery
+        from ..core.external_ids import get_external_ids_for_entity
         
-        # Process external identifier cross-references
-        for prop_id in external_id_properties:
-            if prop_id in claims and prop_id in property_metadata:
+        entity_id = entity_info.get('id', '')
+        if not entity_id:
+            # Try to extract from the URI
+            entity_uri = entity_info.get('uri', '')
+            if entity_uri and '/entity/' in entity_uri:
+                entity_id = entity_uri.split('/entity/')[-1]
+            else:
+                return {}
+        
+        # Get all external identifiers dynamically
+        external_ids = await get_external_ids_for_entity(entity_id)
+        
+        # Convert to the format expected by cl_describe
+        cross_refs = {}
+        for db_name, db_data in external_ids.items():
+            cross_refs[db_name] = db_data['values']
+        
+        return cross_refs
+        
+    except Exception as e:
+        log.warning(f"Dynamic external ID discovery failed, falling back to hardcoded: {e}")
+        
+        # Fallback to hardcoded mappings if dynamic discovery fails
+        claims = entity_info.get('claims', {})
+        cross_refs = {}
+        
+        # Database property mappings (fallback only)
+        database_properties = {
+            'P352': 'uniprot',          # UniProt protein ID
+            'P683': 'chebi',            # ChEBI ID
+            'P231': 'cas',              # CAS Registry Number
+            'P592': 'chembl',           # ChEMBL ID
+            'P715': 'drugbank',         # DrugBank ID
+            'P486': 'mesh',             # MeSH descriptor ID
+            'P685': 'ncbi_gene',        # NCBI Gene ID
+            'P594': 'ensembl_gene',     # Ensembl gene ID
+            'P637': 'refseq',           # RefSeq protein ID
+            'P699': 'disease_ontology', # Disease Ontology ID
+            'P665': 'kegg',             # KEGG ID
+            'P232': 'ec_number',        # EC number
+            'P662': 'pubchem_cid',      # PubChem CID
+            'P2017': 'isomeric_smiles', # isomeric SMILES
+            'P1579': 'pubchem_sid',     # PubChem SID
+            'P638': 'pdb',              # Protein Data Bank ID
+            'P2892': 'umls',            # UMLS CUI
+            'P233': 'smiles',           # SMILES string
+            'P274': 'molecular_formula', # molecular formula
+            'P2798': 'hgnc',            # HGNC gene symbol
+            'P351': 'entrez_gene',      # Entrez Gene ID
+            'P2410': 'wikipathways',    # WikiPathways ID
+        }
+        
+        # Extract clean cross-references
+        for prop_id, db_name in database_properties.items():
+            if prop_id in claims:
                 values = []
                 for claim in claims[prop_id][:5]:  # Limit to first 5 per database
                     if 'mainsnak' in claim and 'datavalue' in claim['mainsnak']:
@@ -155,139 +199,22 @@ async def _extract_cross_references(entity_info: Dict[str, Any]) -> Dict[str, An
                                 values.append(value['id'])
                 
                 if values:
-                    # Use official property label as database name
-                    db_name = property_metadata[prop_id]['label']
-                    database_info = property_metadata[prop_id].get('database_info', {'type': 'unknown'})
-                    
-                    cross_refs[db_name] = {
-                        'identifiers': values,
-                        'property_id': prop_id,
-                        'description': property_metadata[prop_id].get('description', ''),
-                        'formatter_url': property_metadata[prop_id].get('formatter_url'),
-                        'endpoint_type': database_info.get('type', 'unknown'),
-                        'sparql_endpoint': database_info.get('sparql_endpoint') if database_info.get('type') == 'sparql_endpoint' else None,
-                        'database_name': database_info.get('database_name') if database_info.get('type') == 'sparql_endpoint' else None
-                    }
+                    cross_refs[db_name] = values
     
-    # Special handling for coordinates (P625) - not an external identifier
+    # Special handling for coordinates (P625) - useful for geographic entities
     if 'P625' in claims:
         coord_claims = claims['P625']
         if coord_claims and 'mainsnak' in coord_claims[0] and 'datavalue' in coord_claims[0]['mainsnak']:
             coord_value = coord_claims[0]['mainsnak']['datavalue']['value']
-            coordinates = {
+            cross_refs['coordinates'] = {
                 "latitude": coord_value.get('latitude'),
                 "longitude": coord_value.get('longitude'),
                 "precision": coord_value.get('precision')
             }
     
-    # Build result structure
-    result = {"databases": cross_refs}
-    if coordinates:
-        result["coordinates"] = coordinates
-    
-    return result
+    return cross_refs
 
 
-async def _get_sparql_databases() -> Dict[str, str]:
-    """Get databases with SPARQL endpoints from Wikidata."""
-    try:
-        query = """
-        SELECT ?database ?databaseLabel ?sparqlEndpoint WHERE {
-            ?database wdt:P5305 ?sparqlEndpoint .
-            SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
-        }
-        """
-        
-        sparql_client = get_sparql_client()
-        query_result = await sparql_client.query('wikidata', query, timeout=5)
-        
-        # Create mapping of database names to SPARQL endpoints
-        sparql_databases = {}
-        for binding in query_result.data.get('results', {}).get('bindings', []):
-            db_name = binding.get('databaseLabel', {}).get('value', '').lower()
-            sparql_endpoint = binding.get('sparqlEndpoint', {}).get('value', '')
-            if db_name and sparql_endpoint:
-                sparql_databases[db_name] = sparql_endpoint
-        
-        return sparql_databases
-        
-    except Exception as e:
-        log.warning(f"Failed to get SPARQL databases: {e}")
-        return {}
-
-
-async def _get_property_metadata(property_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Get metadata for properties from Wikidata dynamically, including SPARQL endpoint discovery."""
-    
-    if not property_ids:
-        return {}
-    
-    try:
-        # Filter to only valid property IDs and limit to avoid timeout
-        valid_props = [pid for pid in property_ids if pid.startswith('P') and pid[1:].isdigit()][:20]
-        
-        if not valid_props:
-            return {}
-        
-        # Get list of databases with SPARQL endpoints
-        sparql_databases = await _get_sparql_databases()
-        
-        # Basic SPARQL query to get property metadata
-        values_clause = ' '.join(f'wd:{prop_id}' for prop_id in valid_props)
-        query = f"""
-        SELECT ?property ?propertyLabel ?propertyDescription ?formatterURL WHERE {{
-            VALUES ?property {{ {values_clause} }}
-            ?property wikibase:propertyType wikibase:ExternalId .
-            OPTIONAL {{ ?property wdt:P1630 ?formatterURL }}
-            SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
-        }}
-        """
-        
-        # Execute query using unified SPARQL client
-        sparql_client = get_sparql_client()
-        query_result = await sparql_client.query('wikidata', query, timeout=5)
-        
-        # Process results and match against SPARQL databases
-        metadata = {}
-        for binding in query_result.data.get('results', {}).get('bindings', []):
-            prop_uri = binding.get('property', {}).get('value', '')
-            prop_id = prop_uri.split('/')[-1] if '/' in prop_uri else ''
-            
-            if prop_id:
-                prop_label = binding.get('propertyLabel', {}).get('value', prop_id)
-                prop_description = binding.get('propertyDescription', {}).get('value', '')
-                
-                metadata[prop_id] = {
-                    'label': prop_label,
-                    'description': prop_description,
-                    'formatter_url': binding.get('formatterURL', {}).get('value'),
-                    'database_info': {'type': 'api_endpoint'}  # Default
-                }
-                
-                # Pattern match property label/description against known SPARQL databases
-                prop_text = f"{prop_label} {prop_description}".lower()
-                for db_name, sparql_endpoint in sparql_databases.items():
-                    # More precise matching - require significant overlap
-                    db_words = set(db_name.split())
-                    prop_words = set(prop_text.split())
-                    
-                    # Match if database name appears as whole words or significant overlap
-                    if (db_name in prop_text and len(db_name) > 3) or \
-                       (len(db_words & prop_words) >= len(db_words) * 0.7 and len(db_words) > 1):
-                        metadata[prop_id]['database_info'] = {
-                            'database_name': db_name.title(),
-                            'sparql_endpoint': sparql_endpoint,
-                            'type': 'sparql_endpoint'
-                        }
-                        break
-        
-        return metadata
-        
-    except Exception as e:
-        log.warning(f"Failed to get property metadata: {e}")
-        # Fallback to property IDs as labels
-        return {prop_id: {'label': prop_id, 'description': '', 'formatter_url': None, 'database_info': {'type': 'unknown'}} 
-                for prop_id in property_ids if prop_id.startswith('P')}
 
 
 def _is_valid_entity_id(entity_id: str) -> bool:

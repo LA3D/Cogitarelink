@@ -180,25 +180,35 @@ class UnifiedSPARQLClient:
         Uses multi-method discovery: Service Description → VOID → introspection → documentation → samples
         with intelligent caching and fallback to known prefixes.
         """
-        # Check cache first
-        if endpoint_url in self.schema_cache:
-            cached_schema = self.schema_cache[endpoint_url]
-            log.debug(f"Using cached schema for {endpoint_url}")
-            return cached_schema.vocabularies
-        
+        # Skip schema discovery - just return basic known prefixes for fast execution
+        log.debug(f"Using fallback prefixes for {endpoint_url} (schema discovery disabled for speed)")
         try:
-            # Use sophisticated ontology discovery (auto method = Service Description → VOID → introspection etc.)
-            log.info(f"Discovering schema for {endpoint_url} using ontology discovery engine")
-            schema = await discovery_engine.discover_schema(endpoint_url, discovery_method="auto")
+            # Quick timeout schema discovery - don't block SPARQL queries
+            schema = await asyncio.wait_for(
+                discovery_engine.discover_schema(endpoint_url, discovery_method="auto"), 
+                timeout=2.0
+            )
             
-            # Cache the discovered schema
-            self.schema_cache[endpoint_url] = schema
+            # Extract vocabularies as dict regardless of schema format
+            if hasattr(schema, 'vocabularies'):
+                if isinstance(schema.vocabularies, dict):
+                    vocabularies = schema.vocabularies
+                elif isinstance(schema.vocabularies, list):
+                    # Convert list format to dict
+                    vocabularies = {}
+                    for vocab in schema.vocabularies:
+                        if isinstance(vocab, dict) and 'prefix' in vocab and 'namespace' in vocab:
+                            vocabularies[vocab['prefix']] = vocab['namespace']
+                else:
+                    vocabularies = {}
+            else:
+                vocabularies = {}
             
-            log.info(f"Discovered {len(schema.vocabularies)} vocabularies for {endpoint_url}")
-            return schema.vocabularies
+            log.info(f"Quick discovery found {len(vocabularies)} vocabularies for {endpoint_url}")
+            return vocabularies
             
-        except Exception as e:
-            log.warning(f"Schema discovery failed for {endpoint_url}: {e}. Using fallback prefixes.")
+        except (Exception, asyncio.TimeoutError) as e:
+            log.debug(f"Schema discovery skipped for {endpoint_url}: {e}. Using fallback prefixes.")
             # Fall back to known prefixes
             return self._get_known_prefixes(endpoint_url)
     
@@ -300,9 +310,5 @@ async def sparql_query(
     """Async wrapper for SPARQL queries."""
     client = get_sparql_client()
     
-    # Run in thread pool to avoid blocking
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: asyncio.run(client.query(endpoint, query, return_format, **kwargs))
-    )
+    # Direct async call - no need for executor since client.query is already async
+    return await client.query(endpoint, query, return_format, **kwargs)

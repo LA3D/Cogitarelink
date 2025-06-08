@@ -21,12 +21,10 @@ intelligent SPARQL query composition.
 import asyncio
 import json
 import time
-import urllib.request
-import urllib.parse
-import urllib.error
+import httpx
+from urllib.parse import urlparse, urlencode
 from typing import Dict, List, Optional, Any, AsyncGenerator, Union
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
 
 from ..core.debug import get_logger
 from ..core.cache import InMemoryCache
@@ -525,13 +523,14 @@ class OntologyDiscovery:
                 'Accept': 'text/turtle, application/rdf+xml, application/n-triples'
             }
             
-            req = urllib.request.Request(endpoint, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as response:
-                if response.status == 200:
-                    service_desc_content = response.read().decode('utf-8')
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                response = await client.get(endpoint, headers=headers)
+                
+                if response.status_code == 200:
+                    service_desc_content = response.text
                     return self._parse_service_description(endpoint, service_desc_content)
                 else:
-                    raise Exception(f"Service description request failed: HTTP {response.status}")
+                    raise Exception(f"Service description request failed: HTTP {response.status_code}")
                     
         except Exception as e:
             raise Exception(f"Service description discovery failed: {str(e)}")
@@ -557,10 +556,11 @@ class OntologyDiscovery:
                     'Accept': 'text/turtle, application/rdf+xml, application/n-triples, text/html, */*'
                 }
                 
-                req = urllib.request.Request(void_url, headers=headers)
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    if response.status == 200:
-                        void_content = response.read().decode('utf-8')
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                    response = await client.get(void_url, headers=headers)
+                    
+                    if response.status_code == 200:
+                        void_content = response.text
                         return await self._parse_void_content(endpoint, void_content)
                         
             except Exception:
@@ -616,24 +616,30 @@ class OntologyDiscovery:
         base_domain = f"{parsed.scheme}://{parsed.netloc}"
         service_name = self._extract_service_name(endpoint)
         
-        # Comprehensive documentation search strategy
-        search_strategies = [
+        # Comprehensive documentation search strategy - execute sequentially
+        try:
             # Direct documentation patterns
-            self._try_direct_documentation_urls(base_domain),
+            schema = await self._try_direct_documentation_urls(base_domain)
+            if self._is_schema_sufficient(schema):
+                return schema
+        except Exception:
+            pass
+            
+        try:
             # Web search for ontology/vocabulary documentation  
-            self._web_search_for_documentation(service_name, base_domain),
+            schema = await self._web_search_for_documentation(service_name, base_domain)
+            if self._is_schema_sufficient(schema):
+                return schema
+        except Exception:
+            pass
+            
+        try:
             # Known endpoint patterns
-            self._create_known_endpoint_schema(endpoint)
-        ]
-        
-        # Try each strategy until we get sufficient schema information
-        for strategy in search_strategies:
-            try:
-                schema = await strategy
-                if self._is_schema_sufficient(schema):
-                    return schema
-            except Exception as e:
-                continue
+            schema = self._create_known_endpoint_schema(endpoint)
+            if self._is_schema_sufficient(schema):
+                return schema
+        except Exception:
+            pass
         
         # Fallback to known patterns
         return self._create_known_endpoint_schema(endpoint)
@@ -786,26 +792,39 @@ class OntologyDiscovery:
         # Resolve endpoint alias to full URL
         resolved_endpoint = self.known_endpoints.get(endpoint.lower(), endpoint)
         
-        encoded_query = urllib.parse.urlencode({
+        encoded_query = urlencode({
             'query': query,
-            'format': 'application/sparql-results+json'
+            'format': 'json'
         })
         
         headers = {
             'User-Agent': 'Cogitarelink/1.0 (Schema Introspection)',
-            'Accept': 'application/sparql-results+json'
+            'Accept': 'application/sparql-results+json, application/json'
         }
         
-        req = urllib.request.Request(
-            f"{resolved_endpoint}?{encoded_query}",
-            headers=headers
-        )
-        
-        with urllib.request.urlopen(req, timeout=30) as response:
-            if response.status == 200:
-                return json.loads(response.read().decode())
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(
+                f"{resolved_endpoint}?{encoded_query}",
+                headers=headers
+            )
+            
+            if response.status_code == 200:
+                # Add content-type validation before JSON parsing
+                content_type = response.headers.get('content-type', '').lower()
+                if ('application/json' in content_type or 
+                    'sparql-results+json' in content_type):
+                    return response.json()
+                elif ('sparql-results+xml' in content_type or 
+                      'application/sparql-results+xml' in content_type):
+                    # Try to parse as JSON anyway - some endpoints return wrong content-type
+                    try:
+                        return response.json()
+                    except:
+                        raise Exception(f"SPARQL query returned XML format which is not supported: {content_type}")
+                else:
+                    raise Exception(f"SPARQL query returned unsupported content-type: {content_type}")
             else:
-                raise Exception(f"SPARQL query failed: HTTP {response.status}")
+                raise Exception(f"SPARQL query failed: HTTP {response.status_code}")
     
     async def _parse_void_content(self, endpoint: str, void_content: str) -> EndpointSchema:
         """Parse VoID RDF content using RDFLib with fallback to regex"""
@@ -1402,11 +1421,12 @@ class OntologyDiscovery:
                     'Accept': 'text/html, application/xhtml+xml, text/turtle, application/rdf+xml'
                 }
                 
-                req = urllib.request.Request(doc_url, headers=headers)
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    if response.status == 200:
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                    response = await client.get(doc_url, headers=headers)
+                    
+                    if response.status_code == 200:
                         content_type = response.headers.get('content-type', '').lower()
-                        doc_content = response.read().decode('utf-8')
+                        doc_content = response.text
                         
                         if 'html' in content_type:
                             return await self._parse_html_documentation(doc_url, doc_content)
@@ -1464,11 +1484,12 @@ class OntologyDiscovery:
         }
         
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as response:
-                if response.status == 200:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code == 200:
                     content_type = response.headers.get('content-type', '').lower()
-                    content = response.read().decode('utf-8')
+                    content = response.text
                     
                     if any(rdf_type in content_type for rdf_type in ['turtle', 'rdf+xml', 'owl+xml']):
                         # Parse RDF/OWL directly

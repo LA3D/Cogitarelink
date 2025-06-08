@@ -433,6 +433,7 @@ def discover(query: str, domains: List[str]):
 | `cl_validate` | SHACL validation | Consistency checking, improvement suggestions |
 | `cl_query_memory` | Semantic memory queries | OBQC validation, introspection |
 | `cl_resolve` | Universal identifier resolution | Self-configuring, cross-reference navigation |
+| `cl_ontfetch` | **HTTP ontology dereferencing** | **RDFLib parsing, content negotiation, Claude guidance** |
 | `cl_orchestrate` | Multi-step workflow coordination | Research templates, checkpoint/resume |
 
 ## Framework Integration
@@ -563,5 +564,46 @@ def sign_entity(entity: Entity, private_key: bytes) -> SignedEntity:
 - **Context Management**: Maintains research continuity within token limits
 - **Caching Effectiveness**: Minimizes redundant network requests
 - **Teaching System Learning**: Improves agent guidance over time
+
+## Development Task List
+
+### ✅ Completed Tasks (High Priority)
+- **RDFLib Integration**: Replace regex parsing with RDFLib in VoID and Service Description discovery methods
+- **Vocabulary System Integration**: Wire vocabulary discovery into vocab/registry.py instead of manual dictionaries
+- **SPARQL Vocab Integration**: Connect registered vocabularies to SPARQL client prefix resolution
+- **External ID Discovery**: Implement external identifier → URI pattern discovery for general SPARQL endpoints
+- **Property-First Discovery**: Implement property-first discovery pattern using Claude Code async generator architecture
+- **Semantic Hierarchy Refactor**: Refactor discover_schema to follow semantic hierarchy: Service Description → VoID → DESCRIBE → fallback
+- **Entity-Known Discovery Pathway**: Implement External ID → DESCRIBE entity → Extract affordances
+- **Property Affordance Discovery**: Implement Property Affordance Discovery pathway for unknown entities: explore capabilities
+- **Endpoint Resolution Fix**: Fix endpoint resolution bug in _execute_sparql method
+- **Ontology Dereferencing Enhancement**: Implement ontology dereferencing as enhancement step using OntoFetch tool
+- **HTTP Ontology Dereferencing**: Implement proper HTTP-based ontology dereferencing with RDF parsing
+- **Claude Ontology Feedback**: Add Claude-friendly feedback and guidance to ontology fetching
+- **Comprehensive Ontology Tests**: Create comprehensive test suite for ontology dereferencing use cases
+- **Ontology Documentation**: Update documentation in TOOLS.md for ontology dereferencing capabilities
+
+### 🔄 Pending Tasks (High Priority)
+- **Domain-Specific Strategies**: Add domain-specific strategy auto-detection for well-known ontologies (Schema.org, etc.)
+
+### 🔄 Pending Tasks (Medium Priority)
+- **Vocabulary Manager Fix**: Fix vocabulary manager integration for list-based property format
+- **Discovery State Machine**: Create discovery state machine supporting both well-designed and general SPARQL endpoints
+- **Incremental Query Patterns**: Implement incremental query building patterns from experimental workflow
+- **Error-Guided Discovery**: Add error-guided schema discovery with helpful recovery suggestions
+- **Ontology Simplify**: Preserve ontology tools with simplified interface
+
+### 🔄 Pending Tasks (Low Priority)
+- **Async Generator Pattern**: Implement Claude Code async generator pattern for all tools
+- **Clean Tool Responses**: Clean up tool responses to return pure data (no suggestions/guidance)
+
+### Recent Major Accomplishments
+**Commit 28db36e** (2025-01-21): Implemented comprehensive HTTP-based ontology dereferencing with RDFLib integration
+- Complete content negotiation with proper Accept headers for multiple RDF formats
+- Multiple URI fallback patterns and robust parsing of Turtle, RDF/XML, JSON-LD, N-Triples, N3
+- Semantic extraction of OWL/RDFS properties, classes with full metadata
+- Integration with Property Affordance Discovery pathway as enhancement step
+- Comprehensive test suite covering FOAF, Dublin Core, Schema.org, SKOS Core ontologies
+- 83% success rate across diverse ontology formats with Claude-specific guidance generation
 
 This unified CogitareLink architecture successfully combines semantic web rigor with agent intelligence, creating a living scientific assistant that continuously improves through real-world usage while maintaining the highest standards of scientific verification and reproducibility.
