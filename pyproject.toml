@@ -49,7 +49,11 @@ cl_validate = "cogitarelink.cli.validate:main"
 cl_query_memory = "cogitarelink.cli.query_memory:main"
 cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
 cl_ontfetch = "cogitarelink.cli.cl_ontfetch:ontfetch"
+cl_describe = "cogitarelink.cli.cl_describe:describe"
+cl_follow = "cogitarelink.cli.cl_follow:follow"
+cl_property = "cogitarelink.cli.cl_property:property"
 cl_orchestrate = "cogitarelink.cli.orchestrate:main"
+cl_entity = "cogitarelink.cli.cl_entity:entity"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

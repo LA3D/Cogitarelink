@@ -223,11 +223,22 @@ class MultiSparqlClient:
                 
                 log.info(f"Executing SPARQL query on {endpoint}: {query[:100]}...")
                 
-                response = await client.post(
-                    config.url,
-                    data={'query': final_query},
-                    headers=headers
-                )
+                # UniProt requires GET requests with query parameters
+                if endpoint == "uniprot":
+                    params = {'query': final_query, 'format': 'json'}
+                    response = await client.get(
+                        config.url,
+                        params=params,
+                        headers=headers
+                    )
+                else:
+                    # Other endpoints use POST
+                    response = await client.post(
+                        config.url,
+                        data={'query': final_query},
+                        headers=headers
+                    )
+                    
                 response.raise_for_status()
                 result = response.json()
                 

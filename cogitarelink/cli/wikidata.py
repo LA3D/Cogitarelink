@@ -22,7 +22,7 @@ from typing import Optional, List, Set
 from pathlib import Path
 
 from ..adapters.wikidata_client import WikidataClient
-from ..adapters.multi_sparql_client import MultiSparqlClient
+from ..adapters.unified_sparql_client import get_sparql_client
 from ..core.debug import get_logger
 
 log = get_logger("cl_wikidata")
@@ -343,9 +343,10 @@ async def sparql_command(query: str, endpoint: str = "wikidata", format_type: st
             client = WikidataClient()
             raw_result = await client.sparql_query(query)
         else:
-            # Use multi-endpoint client
-            client = MultiSparqlClient(timeout=timeout)
-            raw_result = await client.sparql_query(query, endpoint=endpoint, add_prefixes=True, limit=limit)
+            # Use unified endpoint client
+            client = get_sparql_client()
+            query_result = await client.query(endpoint, query, add_prefixes=True, timeout=timeout)
+            raw_result = query_result.data
         
         # Process results like reference
         bindings = raw_result.get('results', {}).get('bindings', [])
@@ -476,7 +477,7 @@ async def discover_command(endpoint: str, method: str = "auto"):
         else:
             # For non-wikidata endpoints, use multi-endpoint client if available
             try:
-                client = MultiSparqlClient()
+                client = get_sparql_client()
                 # This would use the discovery engine if it exists
                 error_response = {
                     "success": False,

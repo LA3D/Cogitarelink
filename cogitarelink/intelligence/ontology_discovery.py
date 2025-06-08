@@ -854,6 +854,46 @@ class OntologyDiscovery:
                 discovery_metadata={"method": "known_patterns", "source": "wikidata_knowledge_base"}
             )
         
+        # UniProt schema
+        elif "uniprot" in endpoint:
+            return EndpointSchema(
+                endpoint=endpoint,
+                vocabularies={
+                    "up": "http://purl.uniprot.org/core/",
+                    "taxon": "http://purl.uniprot.org/taxonomy/",
+                    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+                    "skos": "http://www.w3.org/2004/02/skos/core#",
+                    "xsd": "http://www.w3.org/2001/XMLSchema#"
+                },
+                classes={
+                    "up:Protein": {"description": "UniProt protein entry", "usage_count": 220000000},
+                    "up:Enzyme": {"description": "Enzyme classification", "usage_count": 10000000},
+                    "taxon:Taxon": {"description": "Taxonomic classification", "usage_count": 2000000}
+                },
+                properties={
+                    "up:mnemonic": {"description": "Protein mnemonic identifier", "usage_count": 220000000},
+                    "up:sequence": {"description": "Protein sequence", "usage_count": 220000000},
+                    "rdfs:label": {"description": "Human-readable label", "usage_count": 300000000}
+                },
+                common_patterns={
+                    "protein_search": "SELECT ?protein ?label WHERE { ?protein a up:Protein . ?protein rdfs:label ?label . FILTER(CONTAINS(LCASE(?label), '{search_term}')) } LIMIT 10",
+                    "enzyme_search": "SELECT ?protein ?enzyme WHERE { ?protein a up:Protein . ?protein up:enzyme ?enzyme } LIMIT 10"
+                },
+                performance_hints=[
+                    "⚠️ ENDPOINT SIZE: ~100+ billion triples - always use specific constraints!",
+                    "Always add LIMIT clauses (recommended: 10-100)",
+                    "Use up:mnemonic or specific protein IDs for targeted queries",
+                    "Text searches on rdfs:label are indexed but use sparingly",
+                    "NEVER use SELECT ?s ?p ?o without type/property constraints"
+                ],
+                agent_guidance=[
+                    "Start protein discovery with up:Protein and rdfs:label",
+                    "Use up:mnemonic for specific protein identification",
+                    "Connect to pathways and diseases via cross-references"
+                ],
+                discovery_metadata={"method": "known_patterns", "source": "uniprot_knowledge_base"}
+            )
+        
         # WikiPathways schema
         elif "wikipathways" in endpoint:
             return EndpointSchema(
@@ -1096,6 +1136,18 @@ class OntologyDiscovery:
                 vocabularies["wp"] = "http://vocabularies.wikipathways.org/wp#"
             if not vocabularies.get("dcterms"):
                 vocabularies["dcterms"] = "http://purl.org/dc/terms/"
+        elif service_name == "uniprot" or "uniprot" in url.lower():
+            # Add known UniProt vocabularies for HTML VoID content
+            if not vocabularies.get("up"):
+                vocabularies["up"] = "http://purl.uniprot.org/core/"
+            if not vocabularies.get("taxon"):
+                vocabularies["taxon"] = "http://purl.uniprot.org/taxonomy/"
+            if not vocabularies.get("rdfs"):
+                vocabularies["rdfs"] = "http://www.w3.org/2000/01/rdf-schema#"
+            if not vocabularies.get("skos"):
+                vocabularies["skos"] = "http://www.w3.org/2004/02/skos/core#"
+            if not vocabularies.get("xsd"):
+                vocabularies["xsd"] = "http://www.w3.org/2001/XMLSchema#"
         
         return EndpointSchema(
             endpoint=f"schema_from_{service_name}_documentation",

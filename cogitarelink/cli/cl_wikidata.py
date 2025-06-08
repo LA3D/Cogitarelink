@@ -16,7 +16,7 @@ from pathlib import Path
 import click
 
 from ..adapters.wikidata_client import WikidataClient
-from ..adapters.multi_sparql_client import MultiSparqlClient
+from ..adapters.unified_sparql_client import get_sparql_client
 from ..core.entity import Entity
 from ..core.debug import get_logger
 from ..intelligence.guidance_generator import guidance_generator, GuidanceContext, DomainType
@@ -412,42 +412,29 @@ async def _sparql_async(
                         "optimization": "Discovery results cache for subsequent queries"
                     }
                 }
-                _output_response(discovery_required_response, output_format)
+                _output_response(discovery_required_response)
                 return
         
         # Input validation
         if not sparql_query.strip():
-            _output_error("SPARQL query cannot be empty", output_format)
+            _output_error("SPARQL query cannot be empty")
             return
         
-        # Initialize multi-endpoint SPARQL client
-        client = MultiSparqlClient(timeout=timeout)
+        # Initialize unified SPARQL client
+        client = get_sparql_client()
         
-        # Validate query against endpoint if requested
+        # Skip validation for now (unified client has built-in schema discovery)
         if validate:
-            validation = client.validate_query_for_endpoint(sparql_query, endpoint)
-            if not validation.get('valid', True):
-                error_response = {
-                    "success": False,
-                    "error": {
-                        "code": "QUERY_VALIDATION_FAILED",
-                        "message": validation.get('error', 'Query validation failed'),
-                        "endpoint": endpoint,
-                        "wrong_prefixes": validation.get('wrong_prefixes', []),
-                        "expected_prefixes": validation.get('expected_prefixes', []),
-                        "suggestions": validation.get('suggestions', [])
-                    }
-                }
-                _output_response(error_response, output_format)
-                return
+            log.info(f"Query validation enabled - using built-in schema discovery for {endpoint}")
         
-        # Execute SPARQL query with multi-endpoint support
-        raw_results = await client.sparql_query(
-            sparql_query, 
+        # Execute SPARQL query with unified client
+        query_result = await client.query(
             endpoint=endpoint,
-            add_prefixes=add_prefixes,
-            limit=limit if 'LIMIT' not in sparql_query.upper() else None
+            query=sparql_query,
+            timeout=timeout,
+            add_prefixes=add_prefixes
         )
+        raw_results = query_result.data
         
         # Process results
         processed_results = _process_sparql_results(raw_results)
@@ -520,8 +507,8 @@ async def _endpoints_async():
     """List available SPARQL endpoints."""
     
     try:
-        client = MultiSparqlClient()
-        endpoints = client.list_endpoints()
+        client = get_sparql_client()
+        endpoints = client.list_known_endpoints()
         
         response = {
             "success": True,

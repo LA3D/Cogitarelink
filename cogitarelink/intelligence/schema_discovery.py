@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 
 from ..core.debug import get_logger
-from ..adapters.multi_sparql_client import MultiSparqlClient
+from ..adapters.unified_sparql_client import get_sparql_client
 
 log = get_logger("schema_discovery")
 
@@ -41,7 +41,7 @@ class SchemaDiscoveryEngine:
     
     def __init__(self, timeout: int = 60):
         self.timeout = timeout
-        self.sparql_client = MultiSparqlClient(timeout=timeout)
+        self.sparql_client = get_sparql_client()
         
         # Discovery queries for different endpoint types
         self.discovery_queries = {
@@ -194,11 +194,12 @@ class SchemaDiscoveryEngine:
         try:
             # Discover classes
             log.debug(f"Discovering classes for {endpoint}")
-            classes_result = await self.sparql_client.sparql_query(
-                self.discovery_queries["classes"], 
-                endpoint=endpoint,
+            query_result = await self.sparql_client.query(
+                endpoint, 
+                self.discovery_queries["classes"],
                 add_prefixes=True
             )
+            classes_result = query_result.data
             
             classes = self._process_classes_result(classes_result)
             
@@ -208,11 +209,12 @@ class SchemaDiscoveryEngine:
         try:
             # Discover properties
             log.debug(f"Discovering properties for {endpoint}")
-            properties_result = await self.sparql_client.sparql_query(
+            query_result = await self.sparql_client.query(
+                endpoint,
                 self.discovery_queries["properties"],
-                endpoint=endpoint,
                 add_prefixes=True
             )
+            properties_result = query_result.data
             
             properties = self._process_properties_result(properties_result)
             
@@ -253,11 +255,12 @@ class SchemaDiscoveryEngine:
         statistics = {}
         
         try:
-            void_result = await self.sparql_client.sparql_query(
+            query_result = await self.sparql_client.query(
+                endpoint,
                 self.discovery_queries["void_statistics"],
-                endpoint=endpoint,
                 add_prefixes=True
             )
+            void_result = query_result.data
             
             for binding in void_result.get('results', {}).get('bindings', []):
                 stat = binding.get('stat', {}).get('value', '')
@@ -324,10 +327,11 @@ class SchemaDiscoveryEngine:
         # Try biological queries based on endpoint type
         if "uniprot" in endpoint.lower():
             try:
-                result = await self.sparql_client.sparql_query(
-                    self.biological_queries["proteins"],
-                    endpoint=endpoint
+                query_result = await self.sparql_client.query(
+                    endpoint,
+                    self.biological_queries["proteins"]
                 )
+                result = query_result.data
                 protein_count = len(result.get('results', {}).get('bindings', []))
                 biological_data["proteins_sampled"] = protein_count
             except:
@@ -335,10 +339,11 @@ class SchemaDiscoveryEngine:
         
         elif "wikipathways" in endpoint.lower():
             try:
-                result = await self.sparql_client.sparql_query(
-                    self.biological_queries["pathways"],
-                    endpoint=endpoint
+                query_result = await self.sparql_client.query(
+                    endpoint,
+                    self.biological_queries["pathways"]
                 )
+                result = query_result.data
                 pathway_count = len(result.get('results', {}).get('bindings', []))
                 biological_data["pathways_sampled"] = pathway_count
             except:
@@ -346,10 +351,11 @@ class SchemaDiscoveryEngine:
         
         elif "idsm" in endpoint.lower():
             try:
-                result = await self.sparql_client.sparql_query(
-                    self.biological_queries["compounds"],
-                    endpoint=endpoint
+                query_result = await self.sparql_client.query(
+                    endpoint,
+                    self.biological_queries["compounds"]
                 )
+                result = query_result.data
                 compound_count = len(result.get('results', {}).get('bindings', []))
                 biological_data["compounds_sampled"] = compound_count
             except:
