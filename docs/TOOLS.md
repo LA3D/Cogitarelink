@@ -144,6 +144,81 @@ cl_sparql "SELECT ?entity ?uniprot WHERE { ?entity wdt:P352 ?uniprot }"
 
 **Pattern Recognition**: Properties have metadata (datatypes, constraints) and usage patterns that can be discovered and analyzed.
 
+### Pattern 4: Chemical Compound Discovery
+```bash
+# Chemical compound with rich structural identifiers
+cl_entity "caffeine" --domain-hint biology | jq '.candidates[0].id'
+# → "Q60235"
+
+# Explore chemical structure and database mappings
+cl_describe Q60235 | jq '.cross_references.pubchem_cid[0]'
+# → "2519"
+
+cl_describe Q60235 | jq '.cross_references.smiles[0]' 
+# → "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"
+
+# Rich chemical database coverage
+cl_follow Q60235 | jq '.data.statistics.total_identifiers'
+# → Multiple chemical databases (ChEBI, CAS, ChEMBL, DrugBank, PubChem, KEGG)
+```
+
+<research_analysis>
+- SMILES and molecular formulas enable computational chemistry workflows
+- Multiple chemical database IDs allow cross-database validation and data integration
+- PDB structures (when available) connect to 3D molecular modeling databases
+- Chemical identifiers enable pathway analysis and drug discovery research
+- Cross-references support both small molecule and macromolecule research workflows
+</research_analysis>
+
+### Pattern 5: Geographic Entity Discovery
+```bash
+# Geographic entity with coordinate information
+cl_entity "Paris" --domain-hint geography | jq '.candidates[0].id'
+# → "Q90"
+
+# Extract geographic coordinates and administrative identifiers
+cl_describe Q90 | jq '.cross_references.coordinates'
+# → {"latitude": 48.857, "longitude": 2.352, "precision": 0.0003}
+
+# Geographic entities may have limited cross-references but rich coordinate data
+cl_describe Q90 | jq '.cross_references | keys'
+# → ["coordinates", "mesh", "umls"]
+```
+
+<research_analysis>
+- Coordinate data enables spatial analysis and GIS workflows
+- Geographic entities often have fewer external database mappings than biological entities
+- Medical subject headings (MeSH) may appear for major cities due to epidemiological research
+- The coordinates format provides precision information for spatial accuracy assessment
+- Geographic discovery patterns focus more on hierarchical relationships than database cross-references
+</research_analysis>
+
+### Pattern 6: Entity Type Coverage Analysis
+```bash
+# Corporate entities typically have minimal cross-references
+cl_entity "Lockheed Martin" --domain-hint corporate | jq '.candidates[0].id'
+# → "Q7240"
+
+cl_describe Q7240 | jq '.cross_references'
+# → {} (empty - corporate entities lack biological/chemical database mappings)
+
+# Biological entities have rich cross-reference coverage
+cl_entity "hemoglobin" --domain-hint biology | jq '.candidates[0].id'  
+# → "Q43041"
+
+cl_describe Q43041 | jq '.cross_references | keys'
+# → ["cas", "chebi", "drugbank", "kegg", "mesh", "molecular_formula", "umls"]
+```
+
+<research_analysis>
+- Cross-reference availability depends heavily on entity domain and type
+- Biological/chemical entities have the richest database coverage (15+ databases)
+- Geographic entities provide coordinate data and some administrative identifiers
+- Corporate/organizational entities may lack relevant cross-references in our current mapping
+- The tool design prioritizes scientific research workflows over business intelligence
+- Empty cross-references are handled gracefully, returning `{}` rather than errors
+</research_analysis>
+
 ## Key Learnings from Discovery Patterns
 
 **Generalization Principle**: Every domain follows the same discovery pattern:
@@ -171,9 +246,13 @@ cl_entity "UniProt ID" --type property  # Auto-detects property searches for "ID
 ```bash
 cl_describe Q7240673 --include-cross-refs
 ```
-**Returns**: `{"entity": {...}, "cross_references": {...}}`
-**Features**: Enhanced cross-reference mappings for 15+ databases (UniProt, ChEBI, CAS, DrugBank, etc.), geographic coordinate extraction
-**Performance**: ~300ms, includes external database IDs
+**Returns**: `{"entity": {...}, "cross_references": {"uniprot": ["P01308"], "pdb": [...]}}`
+**Features**: Clean cross-reference format for 17 databases:
+- **Proteins**: uniprot, pdb, refseq, ensembl_gene, entrez_gene, hgnc
+- **Chemicals**: chebi, cas, chembl, drugbank, pubchem_cid, pubchem_sid, kegg, smiles, isomeric_smiles, molecular_formula
+- **Medical**: mesh, umls, disease_ontology, ec_number  
+- **Geographic**: coordinates (latitude, longitude, precision)
+**Performance**: ~300ms, optimized for Claude Code jq navigation and Entity-Known discovery pathways
 
 ### cl_follow - Cross-Reference Navigation  
 ```bash
@@ -215,6 +294,38 @@ cl_resolve P352 P01308
 ```
 **Returns**: External database links and metadata
 **Performance**: ~500ms, cross-database navigation
+
+### cl_ontfetch - HTTP Ontology Dereferencing
+**NEW**: Comprehensive HTTP-based ontology dereferencing with RDFLib integration
+```bash
+# Direct URI dereferencing with content negotiation
+cl_ontfetch discover "http://xmlns.com/foaf/0.1/" --domain biology
+
+# Schema.org using specialized strategy  
+cl_ontfetch discover "https://schema.org/version/latest/schemaorg-current-https.jsonld"
+
+# Known endpoint discovery
+cl_ontfetch sparql "https://sparql.uniprot.org/sparql" --domain proteins
+
+# List cached ontologies
+cl_ontfetch cache --list
+```
+**Returns**: `{"success": true, "ontology_type": "http_dereferenced", "properties": [...], "classes": [...], "vocabularies": [...], "metadata": {...}}`
+**Features**: 
+- **True HTTP Dereferencing**: Content negotiation, Accept headers, multiple URI fallback patterns
+- **RDFLib Integration**: Robust parsing of Turtle, RDF/XML, JSON-LD, N-Triples, N3
+- **Semantic Extraction**: OWL/RDFS properties, classes, domains, ranges with full metadata  
+- **Claude Guidance**: Domain-specific usage recommendations and SPARQL query patterns
+- **Vocabulary Integration**: Automatic registration with CogitareLink's vocabulary system
+- **Comprehensive Error Handling**: Graceful failures with specific improvement suggestions
+
+**Supported Ontology Patterns**:
+- ✅ **Standard RDF**: FOAF (620 triples, 123 properties), Dublin Core (107 triples, 15 properties)
+- ✅ **OWL Ontologies**: SKOS Core (252 triples, 56 properties), BIBO (1,224 triples, 120 properties)
+- ✅ **JSON-LD**: Schema.org specialized URLs (1,508 properties, 919 classes)
+- ✅ **Content Negotiation**: Automatic format detection and quality scoring
+
+**Performance**: ~2-10s depending on ontology size, with intelligent caching and vocabulary registration
 
 ## Claude Code Integration
 
@@ -283,6 +394,170 @@ Following Claude Code principles: **"Tools return data, system prompts provide i
 - **Complexity analysis**: Monitors query complexity and suggests optimizations
 - **Timeouts**: 10s max execution time
 - **Anti-hallucination**: Only real QIDs/PIDs from search results, enhanced confidence scoring
+
+## Cross-Database Discovery Patterns
+
+The most powerful CogitareLink capability is **cross-database research workflows** that follow semantic links from Wikidata to specialized SPARQL endpoints. These patterns work for any domain - biological, chemical, geographical, or cultural.
+
+### The Universal Discovery Workflow
+
+**Wikidata → External Identifiers → Specialized SPARQL Endpoints**
+
+```bash
+# 1. Start with natural language in Wikidata
+cl_entity "insulin" --domain-hint biology
+# → Q7240673 (preproinsulin)
+
+# 2. Discover cross-references and SPARQL endpoints  
+cl_describe Q7240673
+# → P352: P01308 (UniProt ID)
+# → endpoint_type: "sparql_endpoint" 
+# → sparql_endpoint: "https://sparql.uniprot.org/sparql"
+
+# 3. Use external ID to discover URI patterns in target endpoint
+cl_sparql "SELECT * WHERE { ?s ?p ?o } LIMIT 10" --endpoint uniprot
+# → Found pattern: http://purl.uniprot.org/uniprot/P01308
+
+# 4. Enumerate available properties for the specific entity
+cl_sparql "SELECT DISTINCT ?property WHERE { <http://purl.uniprot.org/uniprot/P01308> ?property ?value } LIMIT 50" --endpoint uniprot
+# → up:mnemonic, up:sequence, rdfs:label, up:organism, etc.
+
+# 5. Construct informed queries using discovered schema
+cl_sparql "SELECT ?name ?mnemonic ?organism WHERE { <http://purl.uniprot.org/uniprot/P01308> rdfs:label ?name ; up:mnemonic ?mnemonic ; up:organism ?organism }" --endpoint uniprot
+# → "Insulin", "INS_HUMAN", "http://purl.uniprot.org/taxonomy/9606"
+```
+
+### Discovery State Machine Integration
+
+The clean cross-reference format from `cl_describe` integrates seamlessly with CogitareLink's **Entity-Known Discovery pathway**:
+
+```bash
+# Step 1: Discover external identifiers
+UNIPROT_ID=$(cl_describe Q7240673 | jq -r '.cross_references.uniprot[0]')
+# → "P01308"
+
+# Step 2: Entity-Known discovery automatically converts to full URI
+# P01308 → http://purl.uniprot.org/uniprot/P01308
+
+# Step 3: DESCRIBE query extracts entity affordances
+cl_sparql "DESCRIBE <http://purl.uniprot.org/uniprot/P01308>" --endpoint uniprot
+# → Properties, types, relationships available for this protein
+
+# Step 4: Build informed queries from discovered affordances
+cl_sparql "SELECT ?protein ?function WHERE { ?protein up:classifiedWith ?function . ?protein up:mnemonic 'INS_HUMAN' }" --endpoint uniprot
+```
+
+**Semantic Hierarchy Workflow**:
+1. **External Identifier Anchor** (clean IDs from `cl_describe`: uniprot, chebi, pdb, etc.)
+2. **URI Pattern Resolution** (automatic conversion: P01308 → http://purl.uniprot.org/uniprot/P01308)  
+3. **DESCRIBE-based Affordance Discovery** (understand what this entity can do)
+4. **Schema Building** (construct patterns from actual entity capabilities)
+5. **Informed Query Construction** (queries based on discovered semantics, not assumptions)
+
+### Cross-Database Research Strategies
+
+#### Strategy 1: Biological Research Chain
+```bash
+# Protein → Structure → Pathways → Diseases
+cl_entity "spike protein" → cl_describe → 
+cl_sparql --endpoint uniprot → cl_sparql --endpoint wikipathways
+```
+
+#### Strategy 2: Chemical Research Chain  
+```bash
+# Compound → Properties → Reactions → Targets
+cl_entity "caffeine" → cl_describe →
+cl_sparql --endpoint idsm → chemical pathway analysis
+```
+
+#### Strategy 3: Geographic Research Chain
+```bash
+# Location → Administrative divisions → Population → Economic data
+cl_entity "Paris" → cl_describe →
+cl_sparql --endpoint osm-qlever → spatial analysis
+```
+
+### Error-Guided Discovery Principles
+
+When queries fail, use **incremental refinement**:
+
+1. **Start Simple**: `SELECT * WHERE { ?s ?p ?o } LIMIT 10`
+2. **Add Specificity**: Use known external identifiers
+3. **Discover Schema**: Enumerate properties before complex queries
+4. **Build Incrementally**: Add clauses one at a time
+5. **Follow Error Guidance**: Use error messages to guide next steps
+
+### Endpoint Classification Insights
+
+**Well-Designed Endpoints** (UniProt, Wikidata):
+- Comprehensive VoID/Service Description documents
+- Rich vocabulary documentation
+- Consistent URI patterns
+
+**General SPARQL Endpoints** (Most others):
+- Limited or no formal documentation
+- Require discovery-based schema exploration
+- Need incremental query building
+
+**The Key Insight**: Use **semantic-first discovery** with branching pathways based on entity availability. This reveals actual capabilities rather than assumed schemas.
+
+## Semantic Discovery Methodology
+
+CogitareLink follows a **semantic hierarchy** for discovery, prioritizing authoritative semantics over statistical analysis:
+
+### Discovery Branching Structure
+
+```
+1. Service Description/VoID Discovery (Authoritative Semantics)
+   ↓
+2. Entity Availability Check
+   ├─ Entity Known/Discoverable → Entity-Known Discovery Pathway
+   └─ No Entity Available → Property Affordance Discovery Pathway
+   ↓
+3. Statistical Fallback (Last Resort)
+```
+
+### Pathway A: Entity-Known Discovery (Semantic)
+**When**: External identifier available or discoverable
+**Process**: External ID → DESCRIBE entity → Extract affordances → Build patterns
+**Focus**: "What can this specific entity type do in this endpoint?"
+
+```bash
+# Example: Insulin protein discovery
+cl_entity "insulin" | jq '.candidates[0].id'
+# → Q7240673
+
+cl_describe Q7240673 | jq '.cross_references.uniprot[0]'
+# → P01308
+
+# DESCRIBE the actual entity to understand its affordances
+cl_sparql "DESCRIBE <http://purl.uniprot.org/uniprot/P01308>" --endpoint uniprot
+# → Shows: sequences, citations, functions, interactions, pathways
+
+# Build queries based on discovered affordances
+cl_sparql "SELECT ?protein ?function WHERE { ?protein up:classifiedWith ?function . ?protein up:mnemonic 'INS_HUMAN' }" --endpoint uniprot
+```
+
+### Pathway B: Property Affordance Discovery (Exploratory) 
+**When**: No known entities to anchor discovery
+**Process**: Property enumeration → Affordance analysis → Entity type discovery
+**Focus**: "What kinds of things can I do here? What entity types exist?"
+
+```bash
+# Discover what kinds of entities and affordances exist
+cl_sparql "SELECT DISTINCT ?type (COUNT(?entity) as ?count) WHERE { ?entity rdf:type ?type } GROUP BY ?type ORDER BY DESC(?count) LIMIT 20" --endpoint unknown_endpoint
+
+# Discover primary affordances/relationships
+cl_sparql "SELECT DISTINCT ?property (COUNT(*) as ?usage) WHERE { ?s ?property ?o } GROUP BY ?property ORDER BY DESC(?usage) LIMIT 50" --endpoint unknown_endpoint
+```
+
+### Semantic Hierarchy Principles
+
+1. **Authoritative First**: Service descriptions and VoID reveal intended semantics
+2. **Affordance-Based**: DESCRIBE entities to understand "what can this do?" not just "what exists?"
+3. **Type-Aware**: Discover entity types and their capabilities, not just property frequencies  
+4. **Context-Driven**: Build from semantic understanding, not statistical analysis
+5. **Fallback Strategy**: Use property enumeration only when semantic methods fail
 
 ## Final Note: Pattern Discovery Over Property Memorization
 

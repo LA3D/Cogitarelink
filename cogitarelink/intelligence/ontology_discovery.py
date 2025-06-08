@@ -25,7 +25,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 from typing import Dict, List, Optional, Any, AsyncGenerator, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from ..core.debug import get_logger
@@ -107,16 +107,25 @@ class ProgressTracker:
 
 
 @dataclass
+@dataclass
 class EndpointSchema:
     """Schema information for a SPARQL endpoint"""
     endpoint: str
-    vocabularies: Dict[str, str]  # prefix -> namespace
-    classes: Dict[str, Dict[str, Any]]  # class_uri -> metadata
-    properties: Dict[str, Dict[str, Any]]  # property_uri -> metadata
-    common_patterns: Dict[str, str]  # pattern_name -> sparql_template
-    performance_hints: List[str]
-    agent_guidance: List[str]
-    discovery_metadata: Dict[str, Any]
+    vocabularies: List[Dict[str, Any]]  # List of vocabulary info
+    classes: List[Dict[str, Any]]  # List of class info
+    properties: List[Dict[str, Any]]  # List of property info
+    query_patterns: List[Dict[str, Any]]  # List of query patterns
+    performance_hints: List[str] = None
+    agent_guidance: List[str] = None
+    discovery_metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.performance_hints is None:
+            self.performance_hints = []
+        if self.agent_guidance is None:
+            self.agent_guidance = []
+        if self.discovery_metadata is None:
+            self.discovery_metadata = {}
 
 
 class OntologyDiscovery:
@@ -145,7 +154,8 @@ class OntologyDiscovery:
         self, 
         endpoint: str, 
         discovery_method: str = "auto",
-        cache_duration: Optional[int] = None
+        cache_duration: Optional[int] = None,
+        known_entity_id: Optional[str] = None
     ) -> EndpointSchema:
         """
         Discover schema information for a SPARQL endpoint with progress tracking
@@ -180,7 +190,7 @@ class OntologyDiscovery:
         
         try:
             if discovery_method == "auto":
-                schema = await self._discover_auto(resolved_endpoint, tracker)
+                schema = await self._discover_auto(resolved_endpoint, tracker, known_entity_id)
             elif discovery_method == "service_description":
                 schema = await self._discover_service_description(resolved_endpoint)
             elif discovery_method == "void":
@@ -194,24 +204,28 @@ class OntologyDiscovery:
             else:
                 raise ValueError(f"Unknown discovery method: {discovery_method}")
             
+            # Enhancement step: Ontology dereferencing (non-blocking)
+            tracker.update_progress("Enhancement: Ontology dereferencing", 0.9, "Enriching schema with dereferenced ontologies")
+            enhanced_schema = await self._enhance_with_ontology_dereferencing(schema)
+            
             # Add discovery metadata
             tracker.update_progress("Adding metadata", 0.95, "Finalizing schema")
-            schema.discovery_metadata.update({
+            enhanced_schema.discovery_metadata.update({
                 "discovery_time_ms": int((time.time() - start_time) * 1000),
                 "discovery_method": discovery_method,
                 "cached_until": time.time() + (cache_duration or 3600)
             })
             
             # Cache result
-            self.cache.set(cache_key, schema)
+            self.cache.set(cache_key, enhanced_schema)
             
             # Complete progress tracking
-            vocab_count = len(schema.vocabularies)
-            class_count = len(schema.classes)
-            prop_count = len(schema.properties)
+            vocab_count = len(enhanced_schema.vocabularies)
+            class_count = len(enhanced_schema.classes)
+            prop_count = len(enhanced_schema.properties)
             tracker.complete_operation(f"Found {vocab_count} vocabularies, {class_count} classes, {prop_count} properties")
             
-            return schema
+            return enhanced_schema
             
         except Exception as e:
             elapsed = time.time() - start_time
@@ -229,15 +243,18 @@ class OntologyDiscovery:
                 print(json.dumps(error_obj))
             raise
     
-    async def _discover_auto(self, endpoint: str, tracker: Optional[ProgressTracker] = None) -> EndpointSchema:
-        """Try multiple discovery methods in order of reliability with optional progress tracking"""
+    async def _discover_auto(self, endpoint: str, tracker: Optional[ProgressTracker] = None, known_entity_id: Optional[str] = None) -> EndpointSchema:
+        """Semantic hierarchy discovery: authoritative semantics → entity affordances → statistical fallback"""
         
-        # First try specialized endpoint discovery for known patterns
+        # Step 1: Service Description/VoID Discovery (Authoritative Semantics)
+        if tracker:
+            tracker.update_progress("Phase 1: Authoritative semantics discovery", 0.1, "Service Description + VoID")
+        
         try:
-            # Check for OSM QLever endpoint - use specialized discovery with CoT patterns
+            # First try specialized endpoint discovery for known patterns
             if "qlever.cs.uni-freiburg.de/api/osm" in endpoint or "osm-planet" in endpoint:
                 if tracker:
-                    tracker.update_progress("Using specialized OSM QLever discovery", 0.1, "Enhanced spatial intelligence patterns")
+                    tracker.update_progress("Using specialized OSM QLever discovery", 0.15, "Enhanced spatial intelligence patterns")
                 schema = await self._discover_osm_qlever_specialized(endpoint)
                 if self._is_schema_sufficient(schema):
                     schema.discovery_metadata["primary_method"] = "osm_qlever_specialized"
@@ -247,44 +264,100 @@ class OntologyDiscovery:
             
             # Check for other known endpoints
             if tracker:
-                tracker.update_progress("Checking known endpoint patterns", 0.15, "Looking for pre-configured schemas")
+                tracker.update_progress("Checking known endpoint patterns", 0.2, "Looking for pre-configured schemas")
             known_schema = self._create_known_endpoint_schema(endpoint)
             if known_schema.discovery_metadata.get("method") == "known_patterns":
                 if tracker:
                     tracker.update_progress("Success with known patterns", 0.9, "Schema from knowledge base")
                 return known_schema
+            
+            # Try Service Description (W3C SPARQL 1.1 standard)
+            if tracker:
+                tracker.update_progress("Trying Service Description", 0.25, "W3C SPARQL 1.1 standard metadata")
+            schema = await self._discover_service_description(endpoint)
+            if self._is_schema_sufficient(schema):
+                schema.discovery_metadata["primary_method"] = "service_description"
+                if tracker:
+                    tracker.update_progress("Success with Service Description", 0.9, "Authoritative semantics discovered")
+                return schema
+            
+            # Try VoID (Vocabulary of Interlinked Datasets)
+            if tracker:
+                tracker.update_progress("Trying VoID discovery", 0.3, "Looking for dataset descriptions")
+            schema = await self._discover_void(endpoint)
+            if self._is_schema_sufficient(schema):
+                schema.discovery_metadata["primary_method"] = "void"
+                if tracker:
+                    tracker.update_progress("Success with VoID", 0.9, "Dataset semantics discovered")
+                return schema
                 
         except Exception as e:
             if tracker:
-                tracker.update_progress("Specialized discovery failed", 0.2, f"Error: {str(e)[:50]}...")
-            # Continue to standard discovery methods
+                tracker.update_progress("Authoritative discovery failed", 0.35, f"Error: {str(e)[:50]}...")
         
-        # Standard discovery methods - service description first per W3C SPARQL 1.1 spec
-        methods = ["service_description", "void", "introspection", "documentation", "samples"]
+        # Step 2: Entity Availability Check → Branching Structure
+        if tracker:
+            tracker.update_progress("Phase 2: Entity availability check", 0.4, "Determining discovery pathway")
         
-        last_error = None
-        for i, method in enumerate(methods):
-            progress = 0.3 + (i * 0.15)  # Spread progress from 0.3 to 0.9
+        # Branch A: Entity-Known Discovery Pathway
+        if known_entity_id:
+            try:
+                if tracker:
+                    tracker.update_progress("Branch A: Entity-Known Discovery", 0.45, f"Using entity: {known_entity_id}")
+                schema = await self._discover_entity_known_pathway(endpoint, known_entity_id, tracker)
+                if self._is_schema_sufficient(schema):
+                    schema.discovery_metadata["primary_method"] = "entity_known_pathway"
+                    schema.discovery_metadata["known_entity"] = known_entity_id
+                    if tracker:
+                        tracker.update_progress("Success with Entity-Known pathway", 0.9, "Entity affordances discovered")
+                    return schema
+            except Exception as e:
+                if tracker:
+                    tracker.update_progress("Entity-Known pathway failed", 0.5, f"Error: {str(e)[:50]}...")
+        
+        # Branch B: Property Affordance Discovery Pathway
+        try:
             if tracker:
-                tracker.update_progress(f"Trying {method} discovery", progress, f"Method {i+1}/{len(methods)}")
+                tracker.update_progress("Branch B: Property Affordance Discovery", 0.55, "Exploring endpoint capabilities")
+            schema = await self._discover_property_affordance_pathway(endpoint, tracker)
+            if self._is_schema_sufficient(schema):
+                schema.discovery_metadata["primary_method"] = "property_affordance_pathway"
+                if tracker:
+                    tracker.update_progress("Success with Property Affordance pathway", 0.9, "Endpoint capabilities discovered")
+                return schema
+        except Exception as e:
+            if tracker:
+                tracker.update_progress("Property Affordance pathway failed", 0.65, f"Error: {str(e)[:50]}...")
+        
+        # Step 3: Statistical Fallback (Last Resort)
+        if tracker:
+            tracker.update_progress("Phase 3: Statistical fallback", 0.7, "Last resort methods")
+        
+        statistical_methods = ["introspection", "documentation", "samples"]
+        last_error = None
+        
+        for i, method in enumerate(statistical_methods):
+            progress = 0.75 + (i * 0.05)  # Progress from 0.75 to 0.85
+            if tracker:
+                tracker.update_progress(f"Trying {method} discovery", progress, f"Statistical method {i+1}/{len(statistical_methods)}")
             
             try:
-                # Call the discovery method
                 schema = await getattr(self, f"_discover_{method}")(endpoint)
                 if self._is_schema_sufficient(schema):
                     schema.discovery_metadata["primary_method"] = method
+                    schema.discovery_metadata["fallback_level"] = "statistical"
                     if tracker:
-                        tracker.update_progress(f"Success with {method}", 0.9, f"Schema discovered")
+                        tracker.update_progress(f"Success with {method}", 0.9, f"Statistical discovery succeeded")
                     return schema
             except Exception as e:
                 last_error = e
                 if tracker:
-                    tracker.update_progress(f"{method} failed", progress + 0.05, f"Error: {str(e)[:50]}...")
+                    tracker.update_progress(f"{method} failed", progress + 0.02, f"Error: {str(e)[:50]}...")
                 continue
         
         # If all methods fail, create minimal schema
         if tracker:
-            tracker.update_progress("All methods failed, creating minimal schema", 0.8, "Fallback mode")
+            tracker.update_progress("All methods failed, creating minimal schema", 0.85, "Fallback mode")
         if last_error:
             return self._create_minimal_schema(endpoint, str(last_error))
         
@@ -310,6 +383,137 @@ class OntologyDiscovery:
         """Sample-based discovery with progress tracking"""
         tracker.update_progress("Analyzing sample data", 0.6, "Extracting patterns from samples")
         return await self._discover_samples(endpoint)
+    
+    async def _discover_entity_known_pathway(self, endpoint: str, known_entity_id: str, tracker: Optional[ProgressTracker] = None) -> EndpointSchema:
+        """
+        Entity-Known Discovery Pathway: External ID → DESCRIBE entity → Extract affordances
+        
+        When we have a known entity (e.g., from external identifier discovery),
+        use DESCRIBE queries to understand what this specific entity type can do.
+        
+        Args:
+            endpoint: SPARQL endpoint URL
+            known_entity_id: Known entity identifier (URI or external ID)
+            tracker: Progress tracking
+            
+        Returns:
+            EndpointSchema with entity-specific affordances
+        """
+        try:
+            if tracker:
+                tracker.update_progress("Converting entity ID to URI", 0.1, f"Processing: {known_entity_id}")
+            
+            # Convert external ID to entity URI if needed
+            entity_uri = await self._resolve_entity_uri(endpoint, known_entity_id)
+            
+            if tracker:
+                tracker.update_progress("DESCRIBE entity for affordances", 0.3, f"URI: {entity_uri}")
+            
+            # DESCRIBE the entity to understand its affordances
+            describe_query = f"DESCRIBE <{entity_uri}>"
+            describe_results = await self._execute_sparql(endpoint, describe_query)
+            
+            if tracker:
+                tracker.update_progress("Extracting affordances from DESCRIBE", 0.6, f"Processing {len(describe_results.get('results', {}).get('bindings', []))} triples")
+            
+            # Extract affordances (properties, types, relationships)
+            affordances = self._extract_entity_affordances(describe_results, entity_uri)
+            
+            if tracker:
+                tracker.update_progress("Building patterns from affordances", 0.8, f"Found {len(affordances.get('properties', []))} properties")
+            
+            # Build schema based on discovered affordances
+            schema = self._build_schema_from_affordances(endpoint, entity_uri, affordances)
+            
+            # Add discovery metadata
+            schema.discovery_metadata.update({
+                "method": "entity_known_pathway",
+                "known_entity": known_entity_id,
+                "entity_uri": entity_uri,
+                "affordances_discovered": len(affordances.get('properties', [])),
+                "semantic_approach": True
+            })
+            
+            if tracker:
+                tracker.update_progress("Entity-Known pathway complete", 0.9, f"Schema built from entity affordances")
+            
+            return schema
+            
+        except Exception as e:
+            # Create minimal schema with error information
+            if tracker:
+                tracker.update_progress("Entity-Known pathway failed", 0.5, f"Error: {str(e)[:50]}")
+            return self._create_minimal_schema(endpoint, f"Entity-Known discovery failed: {str(e)}")
+    
+    async def _discover_property_affordance_pathway(self, endpoint: str, tracker: Optional[ProgressTracker] = None) -> EndpointSchema:
+        """
+        Property Affordance Discovery Pathway: Progressive ontology → usage → statistical approach
+        
+        When we don't have known entities to anchor discovery, explore endpoint capabilities
+        using a progressive approach that adapts to endpoint ontology support.
+        
+        Args:
+            endpoint: SPARQL endpoint URL
+            tracker: Progress tracking
+            
+        Returns:
+            EndpointSchema with discovered capabilities
+        """
+        try:
+            if tracker:
+                tracker.update_progress("Phase 1: Ontology introspection", 0.1, "Looking for explicit property declarations")
+            
+            # Phase 1: Try ontology introspection (OWL/RDFS property declarations)
+            ontology_properties = await self._discover_ontology_properties(endpoint)
+            
+            if ontology_properties:
+                if tracker:
+                    tracker.update_progress("Success with ontology introspection", 0.8, f"Found {len(ontology_properties)} declared properties")
+                
+                schema = await self._build_schema_from_ontology_properties(endpoint, ontology_properties)
+                schema.discovery_metadata.update({
+                    "method": "property_affordance_pathway",
+                    "approach": "ontology_introspection", 
+                    "properties_discovered": len(ontology_properties),
+                    "semantic_approach": True
+                })
+                return schema
+            
+            if tracker:
+                tracker.update_progress("Phase 2: Usage-based discovery", 0.3, "Ontology introspection failed, trying usage analysis")
+            
+            # Phase 2: Usage-based property discovery (brute force)
+            usage_properties = await self._discover_usage_properties(endpoint)
+            
+            if usage_properties:
+                if tracker:
+                    tracker.update_progress("Success with usage-based discovery", 0.8, f"Found {len(usage_properties)} used properties")
+                
+                schema = await self._build_schema_from_usage_properties(endpoint, usage_properties)
+                schema.discovery_metadata.update({
+                    "method": "property_affordance_pathway",
+                    "approach": "usage_based",
+                    "properties_discovered": len(usage_properties),
+                    "semantic_approach": True
+                })
+                return schema
+            
+            if tracker:
+                tracker.update_progress("Phase 3: Statistical fallback", 0.6, "Usage discovery failed, using statistical analysis")
+            
+            # Phase 3: Statistical fallback (property frequency analysis)
+            return await self.discover_properties_first(endpoint, progress_format="silent")
+            
+        except Exception as e:
+            # Final fallback to statistical property discovery
+            if tracker:
+                tracker.update_progress("All phases failed, statistical fallback", 0.7, f"Error: {str(e)[:50]}")
+            
+            try:
+                return await self.discover_properties_first(endpoint, progress_format="silent")
+            except:
+                # Create minimal schema if everything fails
+                return self._create_minimal_schema(endpoint, f"Property affordance discovery failed: {str(e)}")
     
     async def _discover_service_description(self, endpoint: str) -> EndpointSchema:
         """Discover schema through SPARQL 1.1 Service Description (W3C standard)"""
@@ -357,7 +561,7 @@ class OntologyDiscovery:
                 with urllib.request.urlopen(req, timeout=10) as response:
                     if response.status == 200:
                         void_content = response.read().decode('utf-8')
-                        return self._parse_void_content(endpoint, void_content)
+                        return await self._parse_void_content(endpoint, void_content)
                         
             except Exception:
                 continue
@@ -577,7 +781,10 @@ class OntologyDiscovery:
         )
     
     async def _execute_sparql(self, endpoint: str, query: str) -> dict:
-        """Execute SPARQL query against endpoint"""
+        """Execute SPARQL query against endpoint with proper endpoint resolution"""
+        
+        # Resolve endpoint alias to full URL
+        resolved_endpoint = self.known_endpoints.get(endpoint.lower(), endpoint)
         
         encoded_query = urllib.parse.urlencode({
             'query': query,
@@ -590,7 +797,7 @@ class OntologyDiscovery:
         }
         
         req = urllib.request.Request(
-            f"{endpoint}?{encoded_query}",
+            f"{resolved_endpoint}?{encoded_query}",
             headers=headers
         )
         
@@ -600,68 +807,198 @@ class OntologyDiscovery:
             else:
                 raise Exception(f"SPARQL query failed: HTTP {response.status}")
     
-    def _parse_void_content(self, endpoint: str, void_content: str) -> EndpointSchema:
-        """Parse VoID RDF content to extract schema information"""
+    async def _parse_void_content(self, endpoint: str, void_content: str) -> EndpointSchema:
+        """Parse VoID RDF content using RDFLib with fallback to regex"""
         
         vocabularies = {}
         classes = {}
         properties = {}
         performance_hints = []
         agent_guidance = []
-        
-        # Parse VoID content using regex patterns (simplified but functional)
-        import re
-        
-        # Extract dataset size information
         total_triples = 0
-        graphs_info = []
         
-        # Look for triple count patterns (including HTML format)
-        triple_patterns = [
-            r'void:triples\s+(\d+)',
-            r'"triples":\s*(\d+)',
-            r'Triples:\s*(\d+)',
-            r'Total.*?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:billion|million|thousand)?.*?triples',
-            r'Total triples:\s*(\d{1,3}(?:,\d{3})*)',  # HTML format
-            r'(\d{1,3}(?:,\d{3})*)\s*</td>',  # HTML table cells with numbers
-            r'(\d{9,})',  # Large numbers (likely triple counts)
-        ]
-        
-        for pattern in triple_patterns:
-            matches = re.findall(pattern, void_content, re.IGNORECASE)
-            if matches:
+        # First attempt: Parse as RDF using RDFLib
+        try:
+            import rdflib
+            from rdflib.namespace import VOID, RDF, RDFS
+            
+            # Try to parse as RDF (Turtle, RDF/XML, N-Triples)
+            g = rdflib.Graph()
+            
+            # Try different RDF formats
+            formats_to_try = ['turtle', 'xml', 'n3', 'nt', 'json-ld']
+            parsed = False
+            
+            for fmt in formats_to_try:
                 try:
-                    # Extract largest number found
-                    numbers = [int(m.replace(',', '')) for m in matches if m.replace(',', '').isdigit()]
-                    if numbers:
-                        total_triples = max(total_triples, max(numbers))
-                except ValueError:
+                    g.parse(data=void_content, format=fmt)
+                    parsed = True
+                    log.info(f"Successfully parsed VoID as {fmt}")
+                    break
+                except Exception:
                     continue
+            
+            if parsed:
+                # Extract vocabularies from RDFLib's namespace manager (includes built-ins + document prefixes)
+                for prefix, namespace in g.namespace_manager.namespaces():
+                    if prefix and str(namespace):
+                        vocabularies[str(prefix)] = str(namespace)
+                
+                # Enhance with missing scientific prefixes from prefixes.cc
+                missing_prefixes = await self._get_missing_scientific_prefixes(vocabularies)
+                vocabularies.update(missing_prefixes)
+                
+                # Extract triple counts using SPARQL on the VoID graph
+                triple_query = """
+                    SELECT ?dataset ?triples WHERE {
+                        ?dataset void:triples ?triples .
+                    }
+                """
+                
+                try:
+                    for row in g.query(triple_query):
+                        triples = int(row[1])  # row.triples -> row[1]
+                        total_triples = max(total_triples, triples)
+                except Exception as e:
+                    log.debug(f"Could not extract triple counts from VoID: {e}")
+                
+                # Extract classes and their counts
+                class_query = """
+                    SELECT ?class ?instances WHERE {
+                        ?partition void:class ?class .
+                        ?partition void:entities ?instances .
+                    }
+                """
+                
+                try:
+                    for row in g.query(class_query):
+                        class_uri = str(row[0])  # row.class -> row[0] (avoid keyword)
+                        instances = int(row[1]) if row[1] else 0  # row.instances -> row[1]
+                        classes[class_uri] = {
+                            "usage_count": instances,
+                            "description": f"Class with {instances} instances"
+                        }
+                except Exception as e:
+                    log.debug(f"Could not extract class information from VoID: {e}")
+                
+                # Extract properties and their counts
+                property_query = """
+                    SELECT ?property ?triples WHERE {
+                        ?partition void:property ?property .
+                        ?partition void:triples ?triples .
+                    }
+                """
+                
+                try:
+                    for row in g.query(property_query):
+                        prop_uri = str(row[0])  # row.property -> row[0]
+                        triples = int(row[1]) if row[1] else 0  # row.triples -> row[1]
+                        properties[prop_uri] = {
+                            "usage_count": triples,
+                            "description": f"Property with {triples} usages"
+                        }
+                except Exception as e:
+                    log.debug(f"Could not extract property information from VoID: {e}")
+                
+                agent_guidance.append("✅ RDF parsing successful - comprehensive VoID schema extracted")
+                
+            else:
+                raise Exception("Could not parse as RDF - falling back to regex")
+                
+        except Exception as e:
+            log.debug(f"RDF parsing failed ({e}), falling back to regex patterns")
+            
+            # Fallback: Use improved regex patterns for HTML/text content
+            import re
+            
+            # Extract dataset size information
+            triple_patterns = [
+                r'void:triples\s+(\d+)',
+                r'"triples":\s*(\d+)',
+                r'Triples:\s*(\d+)',
+                r'Total.*?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*(?:billion|million|thousand)?.*?triples',
+                r'Total triples:\s*(\d{1,3}(?:,\d{3})*)',  # HTML format
+                r'(\d{1,3}(?:,\d{3})*)\s*</td>',  # HTML table cells with numbers
+                r'(\d{9,})',  # Large numbers (likely triple counts)
+            ]
+            
+            for pattern in triple_patterns:
+                matches = re.findall(pattern, void_content, re.IGNORECASE)
+                if matches:
+                    try:
+                        # Extract largest number found
+                        numbers = [int(m.replace(',', '')) for m in matches if m.replace(',', '').isdigit()]
+                        if numbers:
+                            total_triples = max(total_triples, max(numbers))
+                    except ValueError:
+                        continue
+            
+            # Look for vocabulary/namespace declarations (including HTML links)
+            namespace_patterns = [
+                r'@prefix\s+(\w+):\s+<([^>]+)>',
+                r'xmlns:(\w+)="([^"]+)"',
+                r'PREFIX\s+(\w+):\s+<([^>]+)>',
+                r'href="([^"]*purl\.uniprot\.org[^"]*)"',  # UniProt namespace links
+                r'href="([^"]*www\.w3\.org[^"]*)"',  # W3C standard namespaces
+            ]
+            
+            for pattern in namespace_patterns:
+                matches = re.findall(pattern, void_content, re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple) and len(match) == 2:
+                        prefix, uri = match
+                        if prefix and uri and not prefix.startswith('_'):
+                            vocabularies[prefix] = uri
+                    elif isinstance(match, str) and match.startswith('http'):
+                        # Extract prefix from URI for single-group patterns
+                        if 'purl.uniprot.org' in match:
+                            vocabularies['up'] = 'http://purl.uniprot.org/core/'
+                        elif 'w3.org' in match and 'rdf-schema' in match:
+                            vocabularies['rdfs'] = 'http://www.w3.org/2000/01/rdf-schema#'
+                        elif 'w3.org' in match and 'rdf-syntax' in match:
+                            vocabularies['rdf'] = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
+            
+            agent_guidance.append("⚠️ RDF parsing failed - using regex fallback (limited capabilities)")
         
-        # Look for vocabulary/namespace declarations (including HTML links)
-        namespace_patterns = [
-            r'@prefix\s+(\w+):\s+<([^>]+)>',
-            r'xmlns:(\w+)="([^"]+)"',
-            r'PREFIX\s+(\w+):\s+<([^>]+)>',
-            r'href="([^"]*purl\.uniprot\.org[^"]*)"',  # UniProt namespace links
-            r'href="([^"]*www\.w3\.org[^"]*)"',  # W3C standard namespaces
-        ]
-        
-        for pattern in namespace_patterns:
-            matches = re.findall(pattern, void_content, re.IGNORECASE)
-            for match in matches:
-                if isinstance(match, tuple) and len(match) == 2:
-                    prefix, uri = match
-                    if prefix and uri and not prefix.startswith('_'):
-                        vocabularies[prefix] = uri
-                elif isinstance(match, str) and match.startswith('http'):
-                    # Extract prefix from URI for single-group patterns
-                    if 'purl.uniprot.org' in match:
-                        vocabularies['up'] = 'http://purl.uniprot.org/core/'
-                    elif 'w3.org' in match and 'rdf-schema' in match:
-                        vocabularies['rdfs'] = 'http://www.w3.org/2000/01/rdf-schema#'
-                    elif 'w3.org' in match and 'rdf-syntax' in match:
-                        vocabularies['rdf'] = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
+        # Register discovered vocabularies with the vocabulary system
+        try:
+            from ..vocab.registry import registry
+            
+            for prefix, uri in vocabularies.items():
+                try:
+                    # Create a dynamic vocabulary entry
+                    from ..vocab.registry import VocabEntry, ContextBlock, Versions
+                    
+                    # Check if this vocabulary is already registered
+                    try:
+                        existing = registry.resolve(prefix)
+                        log.debug(f"Vocabulary {prefix} already registered, skipping")
+                        continue
+                    except KeyError:
+                        pass
+                    
+                    # Register new vocabulary
+                    vocab_entry = VocabEntry(
+                        prefix=prefix,
+                        uris={"primary": uri},
+                        context=ContextBlock(inline={"@context": {prefix: uri}}),
+                        versions=Versions(current="discovered", supported=["discovered"]),
+                        features={"discovered_from_void"},
+                        tags={"void_discovery", "sparql_endpoint"}
+                    )
+                    
+                    # Add to registry (note: registry._v is internal but needed for dynamic addition)
+                    registry._v[prefix] = vocab_entry
+                    registry._alias[registry._norm(uri)] = prefix
+                    
+                    log.debug(f"Registered vocabulary {prefix} → {uri}")
+                    
+                except Exception as e:
+                    log.debug(f"Could not register vocabulary {prefix}: {e}")
+                    
+        except Exception as e:
+            log.debug(f"Vocabulary registration failed: {e}")
+            agent_guidance.append("⚠️ Could not register vocabularies with vocab system")
         
         # Generate performance hints based on dataset size
         if total_triples > 100_000_000_000:  # 100+ billion
@@ -979,6 +1316,46 @@ class OntologyDiscovery:
         
         return patterns
     
+    async def _get_missing_scientific_prefixes(self, existing_vocabularies: dict) -> dict:
+        """Get common scientific prefixes from prefixes.cc that are missing from current vocabularies"""
+        
+        missing_prefixes = {}
+        
+        # Common scientific/biological prefixes we want to ensure are available
+        desired_scientific_prefixes = [
+            'up', 'uniprot', 'faldo', 'go', 'chebi', 'pubmed', 'doi', 'orcid',
+            'ncbitaxon', 'mesh', 'reactome', 'kegg', 'ensembl', 'pfam'
+        ]
+        
+        try:
+            # Check which desired prefixes are missing
+            missing = [p for p in desired_scientific_prefixes if p not in existing_vocabularies]
+            
+            if missing:
+                # Fetch from prefixes.cc
+                import httpx
+                async with httpx.AsyncClient(timeout=5) as client:
+                    response = await client.get('https://prefix.cc/context.jsonld')
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        context = data.get('@context', {})
+                        
+                        # Add missing scientific prefixes
+                        for prefix in missing:
+                            if prefix in context:
+                                missing_prefixes[prefix] = context[prefix]
+                                log.debug(f"Added scientific prefix from prefixes.cc: {prefix} → {context[prefix]}")
+                        
+                        log.info(f"Enhanced vocabularies with {len(missing_prefixes)} scientific prefixes from prefixes.cc")
+                    else:
+                        log.debug(f"Could not fetch prefixes.cc: HTTP {response.status_code}")
+                        
+        except Exception as e:
+            log.debug(f"Could not enhance with prefixes.cc: {e}")
+        
+        return missing_prefixes
+    
     def _is_schema_sufficient(self, schema: EndpointSchema) -> bool:
         """Check if discovered schema has sufficient information"""
         return (
@@ -1273,6 +1650,1741 @@ class OntologyDiscovery:
             agent_guidance=["Use discovered patterns as starting points for exploration"],
             discovery_metadata={"method": "sample_analysis", "samples_analyzed": len(samples)}
         )
+    
+    async def discover_external_identifier_patterns(
+        self, 
+        endpoint: str, 
+        external_id: str, 
+        id_property: str = None,
+        progress_format: str = "silent"
+    ) -> Dict[str, Any]:
+        """
+        Discover URI patterns for external identifiers in SPARQL endpoints.
+        
+        This implements the discovery state machine from the experimental workflow:
+        1. External Identifier Anchor - Use known external ID (e.g. P01308)
+        2. URI Pattern Discovery - Find how the endpoint constructs URIs
+        3. Property Enumeration - Discover available properties
+        4. Schema Validation - Test basic patterns work
+        5. Query Construction - Build informed queries
+        
+        Args:
+            endpoint: SPARQL endpoint URL or name
+            external_id: External identifier (e.g. "P01308", "CHEBI:15551")
+            id_property: Optional hint about the identifier type (e.g. "uniprot", "chebi")
+            progress_format: Progress tracking format
+            
+        Returns:
+            Discovery results with URI patterns, properties, and query templates
+        """
+        # Initialize progress tracker
+        tracker = ProgressTracker(progress_format)
+        tracker.start_operation("External Identifier Pattern Discovery", estimated_duration=30)
+        
+        # Resolve endpoint alias
+        resolved_endpoint = self.known_endpoints.get(endpoint.lower(), endpoint)
+        tracker.update_progress("Resolving endpoint", 0.05, f"Using {resolved_endpoint}")
+        
+        discovery_results = {
+            "endpoint": resolved_endpoint,
+            "external_id": external_id,
+            "id_property": id_property,
+            "uri_patterns": [],
+            "properties": [],
+            "validated_patterns": [],
+            "query_templates": {},
+            "discovery_metadata": {
+                "method": "external_identifier_pattern_discovery",
+                "discovery_steps": []
+            }
+        }
+        
+        try:
+            # Step 1: External Identifier Anchor
+            tracker.update_progress("Step 1: External identifier anchor", 0.1, f"Anchoring on {external_id}")
+            anchor_step = await self._discover_external_id_anchor(resolved_endpoint, external_id, id_property)
+            discovery_results["uri_patterns"] = anchor_step["uri_patterns"]
+            discovery_results["discovery_metadata"]["discovery_steps"].append(anchor_step)
+            
+            if not anchor_step["uri_patterns"]:
+                raise Exception(f"No URI patterns found for external ID {external_id}")
+            
+            # Step 2: URI Pattern Discovery  
+            tracker.update_progress("Step 2: URI pattern analysis", 0.3, f"Found {len(anchor_step['uri_patterns'])} patterns")
+            pattern_step = await self._analyze_uri_patterns(resolved_endpoint, anchor_step["uri_patterns"])
+            discovery_results["validated_patterns"] = pattern_step["validated_patterns"]
+            discovery_results["discovery_metadata"]["discovery_steps"].append(pattern_step)
+            
+            # Step 3: Property Enumeration
+            tracker.update_progress("Step 3: Property enumeration", 0.5, "Discovering available properties")
+            if discovery_results["validated_patterns"]:
+                best_pattern = discovery_results["validated_patterns"][0]
+                prop_step = await self._enumerate_entity_properties(resolved_endpoint, best_pattern["example_uri"])
+                discovery_results["properties"] = prop_step["properties"]
+                discovery_results["discovery_metadata"]["discovery_steps"].append(prop_step)
+                
+                # Step 4: Schema Validation
+                tracker.update_progress("Step 4: Schema validation", 0.7, "Testing query patterns")
+                validation_step = await self._validate_discovery_patterns(
+                    resolved_endpoint, 
+                    best_pattern["example_uri"], 
+                    prop_step["properties"][:5]  # Test top 5 properties
+                )
+                discovery_results["discovery_metadata"]["discovery_steps"].append(validation_step)
+                
+                # Step 5: Query Construction
+                tracker.update_progress("Step 5: Query template generation", 0.9, "Building query templates")
+                template_step = self._generate_query_templates(
+                    best_pattern, 
+                    prop_step["properties"], 
+                    external_id
+                )
+                discovery_results["query_templates"] = template_step["templates"]
+                discovery_results["discovery_metadata"]["discovery_steps"].append(template_step)
+            
+            tracker.complete_operation(f"Discovered {len(discovery_results['uri_patterns'])} URI patterns, {len(discovery_results['properties'])} properties")
+            return discovery_results
+            
+        except Exception as e:
+            tracker.complete_operation(f"Discovery failed: {str(e)}")
+            discovery_results["error"] = str(e)
+            return discovery_results
+    
+    async def _discover_external_id_anchor(self, endpoint: str, external_id: str, id_property: str = None) -> Dict[str, Any]:
+        """Step 1: Use external identifier to find URI patterns"""
+        
+        # Try different search strategies to find the external identifier in the endpoint
+        search_queries = []
+        
+        # Strategy 1: Direct identifier search (works for most biological databases)
+        search_queries.append({
+            "name": "direct_identifier_search",
+            "query": f"""
+                SELECT DISTINCT ?entity WHERE {{
+                    ?entity ?property "{external_id}" .
+                }} LIMIT 10
+            """,
+            "expected_pattern": f"Contains {external_id} as literal value"
+        })
+        
+        # Strategy 2: URI construction search (common pattern) - prioritize this
+        if id_property:
+            # Known patterns for common databases
+            common_patterns = {
+                "uniprot": f"http://purl.uniprot.org/uniprot/{external_id}",
+                "chebi": f"http://purl.obolibrary.org/obo/CHEBI_{external_id.replace('CHEBI:', '')}",
+                "pubchem": f"http://rdf.ncbi.nlm.nih.gov/pubchem/compound/CID{external_id}",
+                "mesh": f"http://id.nlm.nih.gov/mesh/{external_id}",
+                "go": f"http://purl.obolibrary.org/obo/GO_{external_id.replace('GO:', '')}"
+            }
+            
+            if id_property.lower() in common_patterns:
+                test_uri = common_patterns[id_property.lower()]
+                # Insert at beginning - prioritize known patterns
+                search_queries.insert(0, {
+                    "name": "known_pattern_test",
+                    "query": f"""
+                        SELECT DISTINCT ?property ?value WHERE {{
+                            <{test_uri}> ?property ?value .
+                        }} LIMIT 10
+                    """,
+                    "expected_pattern": test_uri,
+                    "test_uri": test_uri  # Store for easier extraction
+                })
+        
+        # Strategy 3: Substring search in URIs (fallback)
+        search_queries.append({
+            "name": "uri_substring_search", 
+            "query": f"""
+                SELECT DISTINCT ?entity WHERE {{
+                    ?entity ?property ?value .
+                    FILTER(CONTAINS(STR(?entity), "{external_id}"))
+                }} LIMIT 10
+            """,
+            "expected_pattern": f"URI contains {external_id}"
+        })
+        
+        # Execute search queries
+        uri_patterns = []
+        successful_searches = []
+        
+        for search in search_queries:
+            try:
+                result = await self._execute_sparql(endpoint, search["query"])
+                
+                if "results" in result and result["results"]["bindings"]:
+                    # Special handling for known pattern test - directly use the test URI
+                    if search["name"] == "known_pattern_test" and "test_uri" in search:
+                        test_uri = search["test_uri"]
+                        pattern = self._extract_uri_pattern(test_uri, external_id)
+                        uri_patterns.append({
+                            "pattern": pattern,
+                            "example_uri": test_uri,
+                            "search_method": search["name"],
+                            "confidence": 0.95  # High confidence for known patterns
+                        })
+                        successful_searches.append(search["name"])
+                        continue
+                    
+                    # Extract URI patterns from results for other searches
+                    for binding in result["results"]["bindings"]:
+                        for var, value in binding.items():
+                            if value.get("type") == "uri":
+                                uri = value.get("value", "")
+                                if external_id in uri or (id_property and id_property.lower() in uri.lower()):
+                                    pattern = self._extract_uri_pattern(uri, external_id)
+                                    if pattern not in [p["pattern"] for p in uri_patterns]:
+                                        uri_patterns.append({
+                                            "pattern": pattern,
+                                            "example_uri": uri,
+                                            "search_method": search["name"],
+                                            "confidence": 0.7
+                                        })
+                    
+                    successful_searches.append(search["name"])
+                    
+            except Exception as e:
+                log.debug(f"Search strategy {search['name']} failed: {e}")
+                continue
+        
+        return {
+            "step": "external_id_anchor",
+            "external_id": external_id,
+            "successful_searches": successful_searches,
+            "uri_patterns": uri_patterns,
+            "queries_attempted": len(search_queries)
+        }
+    
+    async def _analyze_uri_patterns(self, endpoint: str, uri_patterns: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Step 2: Analyze and validate discovered URI patterns"""
+        
+        validated_patterns = []
+        
+        for pattern_info in uri_patterns:
+            try:
+                # Test if the pattern URI actually exists and has data
+                test_query = f"""
+                    SELECT (COUNT(*) as ?count) WHERE {{
+                        <{pattern_info['example_uri']}> ?property ?value .
+                    }}
+                """
+                
+                result = await self._execute_sparql(endpoint, test_query)
+                
+                if "results" in result and result["results"]["bindings"]:
+                    count_binding = result["results"]["bindings"][0]
+                    count = int(count_binding.get("count", {}).get("value", "0"))
+                    
+                    if count > 0:
+                        validated_patterns.append({
+                            **pattern_info,
+                            "property_count": count,
+                            "validation_status": "confirmed"
+                        })
+                        
+            except Exception as e:
+                log.debug(f"Pattern validation failed for {pattern_info['example_uri']}: {e}")
+                continue
+        
+        # Sort by confidence and property count
+        validated_patterns.sort(key=lambda x: (x["confidence"], x.get("property_count", 0)), reverse=True)
+        
+        return {
+            "step": "uri_pattern_analysis",
+            "patterns_tested": len(uri_patterns),
+            "validated_patterns": validated_patterns
+        }
+    
+    async def _enumerate_entity_properties(self, endpoint: str, entity_uri: str) -> Dict[str, Any]:
+        """Step 3: Enumerate available properties for the entity"""
+        
+        # Query to find all properties used by this entity
+        property_query = f"""
+            SELECT DISTINCT ?property (COUNT(*) as ?usage_count) WHERE {{
+                <{entity_uri}> ?property ?value .
+            }} GROUP BY ?property ORDER BY DESC(?usage_count) LIMIT 50
+        """
+        
+        properties = []
+        
+        try:
+            result = await self._execute_sparql(endpoint, property_query)
+            
+            if "results" in result and result["results"]["bindings"]:
+                for binding in result["results"]["bindings"]:
+                    prop_uri = binding.get("property", {}).get("value", "")
+                    usage_count = int(binding.get("usage_count", {}).get("value", "0"))
+                    
+                    if prop_uri:
+                        # Extract prefix and local name
+                        if "#" in prop_uri:
+                            namespace, local_name = prop_uri.rsplit("#", 1)
+                            prefix = self._extract_prefix_from_namespace(namespace + "#")
+                        elif "/" in prop_uri:
+                            namespace, local_name = prop_uri.rsplit("/", 1)
+                            prefix = self._extract_prefix_from_namespace(namespace + "/")
+                        else:
+                            prefix = "unknown"
+                            local_name = prop_uri
+                        
+                        properties.append({
+                            "uri": prop_uri,
+                            "prefix": prefix,
+                            "local_name": local_name,
+                            "usage_count": usage_count,
+                            "prefixed_form": f"{prefix}:{local_name}" if prefix != "unknown" else local_name
+                        })
+                        
+        except Exception as e:
+            log.debug(f"Property enumeration failed for {entity_uri}: {e}")
+        
+        return {
+            "step": "property_enumeration",
+            "entity_uri": entity_uri,
+            "properties": properties,
+            "property_count": len(properties)
+        }
+    
+    async def _validate_discovery_patterns(self, endpoint: str, entity_uri: str, properties: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Step 4: Validate that discovered patterns work with real queries"""
+        
+        validation_results = []
+        
+        # Test basic property access
+        for prop in properties[:3]:  # Test top 3 properties
+            test_query = f"""
+                SELECT ?value WHERE {{
+                    <{entity_uri}> <{prop['uri']}> ?value .
+                }} LIMIT 5
+            """
+            
+            try:
+                result = await self._execute_sparql(endpoint, test_query)
+                
+                if "results" in result and result["results"]["bindings"]:
+                    values = [b.get("value", {}).get("value", "") for b in result["results"]["bindings"]]
+                    validation_results.append({
+                        "property": prop["prefixed_form"],
+                        "property_uri": prop["uri"],
+                        "test_status": "success",
+                        "sample_values": values[:3],
+                        "value_count": len(values)
+                    })
+                else:
+                    validation_results.append({
+                        "property": prop["prefixed_form"],
+                        "property_uri": prop["uri"], 
+                        "test_status": "no_results",
+                        "sample_values": [],
+                        "value_count": 0
+                    })
+                    
+            except Exception as e:
+                validation_results.append({
+                    "property": prop["prefixed_form"],
+                    "property_uri": prop["uri"],
+                    "test_status": "failed",
+                    "error": str(e),
+                    "sample_values": [],
+                    "value_count": 0
+                })
+        
+        successful_tests = len([r for r in validation_results if r["test_status"] == "success"])
+        
+        return {
+            "step": "schema_validation",
+            "entity_uri": entity_uri,
+            "tests_performed": len(validation_results),
+            "successful_tests": successful_tests,
+            "validation_results": validation_results,
+            "success_rate": successful_tests / len(validation_results) if validation_results else 0
+        }
+    
+    def _generate_query_templates(self, uri_pattern: Dict[str, Any], properties: List[Dict[str, Any]], external_id: str) -> Dict[str, Any]:
+        """Step 5: Generate query templates based on discovered patterns"""
+        
+        templates = {}
+        
+        # Basic entity information template
+        if properties:
+            top_properties = properties[:5]
+            select_vars = " ".join([f"?{prop['local_name']}" for prop in top_properties])
+            where_clauses = " . ".join([f"<{uri_pattern['example_uri']}> <{prop['uri']}> ?{prop['local_name']}" for prop in top_properties])
+            
+            templates["entity_details"] = {
+                "description": f"Get basic details for {external_id}",
+                "query": f"""
+                    SELECT {select_vars} WHERE {{
+                        {where_clauses} .
+                    }}
+                """,
+                "variables": [prop['local_name'] for prop in top_properties]
+            }
+        
+        # General exploration template
+        templates["explore_entity"] = {
+            "description": f"Explore all properties of {external_id}",
+            "query": f"""
+                SELECT DISTINCT ?property ?value WHERE {{
+                    <{uri_pattern['example_uri']}> ?property ?value .
+                }} LIMIT 20
+            """,
+            "variables": ["property", "value"]
+        }
+        
+        # Pattern-based template for finding similar entities
+        if uri_pattern.get("pattern"):
+            base_pattern = uri_pattern["pattern"].replace(external_id, "{EXTERNAL_ID}")
+            templates["similar_entities"] = {
+                "description": f"Find entities with similar URI pattern to {external_id}",
+                "query": f"""
+                    SELECT DISTINCT ?entity WHERE {{
+                        ?entity ?property ?value .
+                        FILTER(REGEX(STR(?entity), "{base_pattern.replace('{EXTERNAL_ID}', '.*')}"))
+                    }} LIMIT 10
+                """,
+                "variables": ["entity"],
+                "pattern_template": base_pattern
+            }
+        
+        return {
+            "step": "query_template_generation",
+            "external_id": external_id,
+            "templates": templates,
+            "template_count": len(templates)
+        }
+    
+    def _extract_uri_pattern(self, uri: str, external_id: str) -> str:
+        """Extract a generalized URI pattern from a specific URI"""
+        # Simple pattern extraction - replace the external ID with a placeholder
+        return uri.replace(external_id, "{EXTERNAL_ID}")
+    
+    def _extract_prefix_from_namespace(self, namespace: str) -> str:
+        """Extract or generate a prefix from a namespace URI"""
+        # Try to find known prefixes for common namespaces
+        common_prefixes = {
+            "http://www.w3.org/2000/01/rdf-schema#": "rdfs",
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#": "rdf",
+            "http://purl.uniprot.org/core/": "up",
+            "http://purl.uniprot.org/taxonomy/": "taxon",
+            "http://www.w3.org/2004/02/skos/core#": "skos",
+            "http://purl.org/dc/terms/": "dcterms",
+            "http://purl.org/dc/elements/1.1/": "dc",
+            "http://xmlns.com/foaf/0.1/": "foaf"
+        }
+        
+        if namespace in common_prefixes:
+            return common_prefixes[namespace]
+        
+        # Generate prefix from domain name
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(namespace)
+            domain_parts = parsed.netloc.split('.')
+            if len(domain_parts) >= 2:
+                return domain_parts[-2]  # e.g., "uniprot" from "purl.uniprot.org"
+            return "unknown"
+        except:
+            return "unknown"
+    
+    async def discover_properties_first(
+        self,
+        endpoint: str,
+        progress_format: str = "silent",
+        property_limit: int = 100,
+        co_occurrence_limit: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Property-first discovery pattern using Claude Code async generator architecture.
+        
+        Implements progressive discovery phases:
+        1. Basic Property Enumeration - Find most used properties
+        2. Usage Pattern Analysis - Understand property frequency and types
+        3. Co-occurrence Analysis - Discover which properties are used together  
+        4. Query Template Generation - Build informed query patterns
+        
+        This follows Claude Code's async generator pattern with streaming progress updates
+        and performance optimization through chunked results and intelligent caching.
+        
+        Args:
+            endpoint: SPARQL endpoint URL or name
+            progress_format: Progress tracking format ('silent', 'human', 'json')
+            property_limit: Maximum properties to discover (default: 100)
+            co_occurrence_limit: Limit for co-occurrence analysis (default: 20)
+            
+        Returns:
+            Comprehensive property analysis with query templates and usage patterns
+        """
+        # Initialize progress tracker following Claude Code pattern
+        tracker = ProgressTracker(progress_format)
+        tracker.start_operation("Property-First Discovery", estimated_duration=45)
+        
+        # Resolve endpoint alias
+        resolved_endpoint = self.known_endpoints.get(endpoint.lower(), endpoint)
+        tracker.update_progress("Resolving endpoint", 0.05, f"Using {resolved_endpoint}")
+        
+        # Initialize discovery results structure
+        discovery_results = {
+            "endpoint": resolved_endpoint,
+            "discovery_method": "property_first",
+            "phases": [],
+            "properties": [],
+            "usage_patterns": {},
+            "co_occurrence_patterns": {},
+            "query_templates": {},
+            "performance_metrics": {
+                "total_time_ms": 0,
+                "properties_discovered": 0,
+                "queries_executed": 0,
+                "cache_hits": 0
+            }
+        }
+        
+        start_time = time.time()
+        
+        try:
+            # Phase 1: Basic Property Enumeration
+            tracker.update_progress("Phase 1: Property enumeration", 0.1, "Discovering most used properties")
+            enumeration_result = await self._enumerate_properties_phase(
+                resolved_endpoint, property_limit, tracker
+            )
+            discovery_results["phases"].append(enumeration_result)
+            discovery_results["properties"] = enumeration_result["properties"]
+            discovery_results["performance_metrics"]["queries_executed"] += enumeration_result.get("queries_executed", 0)
+            
+            # Phase 2: Usage Pattern Analysis
+            tracker.update_progress("Phase 2: Usage pattern analysis", 0.4, "Analyzing property types and frequency")
+            pattern_result = await self._analyze_usage_patterns_phase(
+                resolved_endpoint, discovery_results["properties"][:50], tracker  # Top 50 for pattern analysis
+            )
+            discovery_results["phases"].append(pattern_result)
+            discovery_results["usage_patterns"] = pattern_result["patterns"]
+            discovery_results["performance_metrics"]["queries_executed"] += pattern_result.get("queries_executed", 0)
+            
+            # Phase 3: Co-occurrence Analysis
+            tracker.update_progress("Phase 3: Co-occurrence analysis", 0.7, "Finding properties used together")
+            cooccurrence_result = await self._analyze_cooccurrence_phase(
+                resolved_endpoint, discovery_results["properties"][:co_occurrence_limit], tracker
+            )
+            discovery_results["phases"].append(cooccurrence_result)
+            discovery_results["co_occurrence_patterns"] = cooccurrence_result["patterns"]
+            discovery_results["performance_metrics"]["queries_executed"] += cooccurrence_result.get("queries_executed", 0)
+            
+            # Phase 4: Query Template Generation
+            tracker.update_progress("Phase 4: Template generation", 0.9, "Creating query templates")
+            template_result = self._generate_property_templates_phase(
+                discovery_results["properties"], 
+                discovery_results["usage_patterns"],
+                discovery_results["co_occurrence_patterns"]
+            )
+            discovery_results["phases"].append(template_result)
+            discovery_results["query_templates"] = template_result["templates"]
+            
+            # Finalize metrics
+            total_time = int((time.time() - start_time) * 1000)
+            discovery_results["performance_metrics"]["total_time_ms"] = total_time
+            discovery_results["performance_metrics"]["properties_discovered"] = len(discovery_results["properties"])
+            
+            tracker.complete_operation(
+                f"Discovered {len(discovery_results['properties'])} properties, "
+                f"{len(discovery_results['query_templates'])} templates"
+            )
+            
+            return discovery_results
+            
+        except Exception as e:
+            tracker.complete_operation(f"Discovery failed: {str(e)}")
+            discovery_results["error"] = str(e)
+            discovery_results["performance_metrics"]["total_time_ms"] = int((time.time() - start_time) * 1000)
+            return discovery_results
+    
+    async def _enumerate_properties_phase(
+        self, 
+        endpoint: str, 
+        limit: int,
+        tracker: ProgressTracker
+    ) -> Dict[str, Any]:
+        """Phase 1: Basic property enumeration with usage frequency"""
+        
+        tracker.update_progress("Enumerating properties", 0.15, "Finding most used properties")
+        
+        # Query to find all properties with usage counts
+        # Use a more conservative approach for large endpoints
+        property_query = f"""
+            SELECT DISTINCT ?property (COUNT(*) as ?usage_count) WHERE {{
+                ?subject ?property ?object .
+            }} GROUP BY ?property 
+            ORDER BY DESC(?usage_count) 
+            LIMIT {limit}
+        """
+        
+        # For large endpoints like UniProt, use a simpler sampling approach
+        if "uniprot" in endpoint.lower():
+            property_query = f"""
+                SELECT DISTINCT ?property WHERE {{
+                    ?subject ?property ?object .
+                }} LIMIT {limit}
+            """
+        
+        properties = []
+        queries_executed = 0
+        
+        try:
+            result = await self._execute_sparql(endpoint, property_query)
+            queries_executed += 1
+            
+            if "results" in result and result["results"]["bindings"]:
+                for binding in result["results"]["bindings"]:
+                    prop_uri = binding.get("property", {}).get("value", "")
+                    # Handle both counted and simple queries
+                    usage_count = int(binding.get("usage_count", {}).get("value", "1"))
+                    
+                    if prop_uri:
+                        # Extract namespace and prefix information
+                        namespace, local_name = self._split_uri(prop_uri)
+                        prefix = self._extract_prefix_from_namespace(namespace)
+                        
+                        property_info = {
+                            "uri": prop_uri,
+                            "namespace": namespace,
+                            "local_name": local_name,
+                            "prefix": prefix,
+                            "prefixed_form": f"{prefix}:{local_name}" if prefix != "unknown" else local_name,
+                            "usage_count": usage_count,
+                            "rank": len(properties) + 1
+                        }
+                        properties.append(property_info)
+            
+            tracker.update_progress("Property enumeration complete", 0.25, f"Found {len(properties)} properties")
+            
+        except Exception as e:
+            log.error(f"Property enumeration failed: {e}")
+            # Try even simpler query as fallback
+            try:
+                simple_query = f"""
+                    SELECT DISTINCT ?property WHERE {{
+                        ?s ?property ?o .
+                    }} LIMIT {min(limit, 20)}
+                """
+                result = await self._execute_sparql(endpoint, simple_query)
+                queries_executed += 1
+                
+                if "results" in result and result["results"]["bindings"]:
+                    for binding in result["results"]["bindings"]:
+                        prop_uri = binding.get("property", {}).get("value", "")
+                        if prop_uri:
+                            namespace, local_name = self._split_uri(prop_uri)
+                            prefix = self._extract_prefix_from_namespace(namespace)
+                            
+                            property_info = {
+                                "uri": prop_uri,
+                                "namespace": namespace,
+                                "local_name": local_name,
+                                "prefix": prefix,
+                                "prefixed_form": f"{prefix}:{local_name}" if prefix != "unknown" else local_name,
+                                "usage_count": 1,  # Default value for simple query
+                                "rank": len(properties) + 1
+                            }
+                            properties.append(property_info)
+                
+                tracker.update_progress("Fallback enumeration complete", 0.25, f"Found {len(properties)} properties")
+                
+            except Exception as e2:
+                log.error(f"Fallback property enumeration also failed: {e2}")
+                properties = []
+        
+        return {
+            "phase": "property_enumeration",
+            "properties": properties,
+            "queries_executed": queries_executed,
+            "property_count": len(properties)
+        }
+    
+    async def _analyze_usage_patterns_phase(
+        self,
+        endpoint: str,
+        properties: List[Dict[str, Any]],
+        tracker: ProgressTracker
+    ) -> Dict[str, Any]:
+        """Phase 2: Analyze usage patterns for top properties"""
+        
+        tracker.update_progress("Analyzing usage patterns", 0.45, "Examining property types and frequency")
+        
+        patterns = {}
+        queries_executed = 0
+        
+        # Analyze top properties in batches for performance
+        batch_size = 10
+        for i in range(0, min(len(properties), 30), batch_size):  # Analyze top 30 properties
+            batch = properties[i:i + batch_size]
+            batch_patterns = await self._analyze_property_batch(endpoint, batch)
+            patterns.update(batch_patterns)
+            queries_executed += len(batch)
+            
+            progress = 0.45 + (i / min(len(properties), 30)) * 0.2
+            tracker.update_progress(
+                f"Analyzed {i + len(batch)} properties", 
+                progress, 
+                f"Batch {i//batch_size + 1}"
+            )
+        
+        # Generate pattern summary
+        pattern_summary = self._summarize_usage_patterns(patterns)
+        
+        return {
+            "phase": "usage_pattern_analysis",
+            "patterns": patterns,
+            "summary": pattern_summary,
+            "queries_executed": queries_executed,
+            "properties_analyzed": len(patterns)
+        }
+    
+    async def _analyze_property_batch(
+        self,
+        endpoint: str,
+        properties: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze a batch of properties for performance optimization"""
+        
+        batch_patterns = {}
+        
+        for prop in properties:
+            try:
+                # Query to analyze object types for this property
+                type_query = f"""
+                    SELECT ?object_type (COUNT(*) as ?count) WHERE {{
+                        ?subject <{prop['uri']}> ?object .
+                        OPTIONAL {{ ?object a ?object_type }}
+                    }} GROUP BY ?object_type 
+                    ORDER BY DESC(?count) 
+                    LIMIT 10
+                """
+                
+                result = await self._execute_sparql(endpoint, type_query)
+                
+                object_types = []
+                if "results" in result and result["results"]["bindings"]:
+                    for binding in result["results"]["bindings"]:
+                        obj_type = binding.get("object_type", {}).get("value", "")
+                        count = int(binding.get("count", {}).get("value", "0"))
+                        if obj_type:
+                            object_types.append({"type": obj_type, "count": count})
+                        elif count > 0:  # Literal values (no type)
+                            object_types.append({"type": "literal", "count": count})
+                
+                batch_patterns[prop["uri"]] = {
+                    "property": prop,
+                    "object_types": object_types,
+                    "is_object_property": any(t["type"] != "literal" for t in object_types),
+                    "is_datatype_property": any(t["type"] == "literal" for t in object_types)
+                }
+                
+            except Exception as e:
+                log.debug(f"Pattern analysis failed for {prop['uri']}: {e}")
+                batch_patterns[prop["uri"]] = {
+                    "property": prop,
+                    "object_types": [],
+                    "analysis_error": str(e)
+                }
+        
+        return batch_patterns
+    
+    async def _analyze_cooccurrence_phase(
+        self,
+        endpoint: str,
+        properties: List[Dict[str, Any]],
+        tracker: ProgressTracker
+    ) -> Dict[str, Any]:
+        """Phase 3: Analyze which properties are commonly used together"""
+        
+        tracker.update_progress("Analyzing co-occurrence", 0.75, "Finding properties used together")
+        
+        cooccurrence_patterns = {}
+        queries_executed = 0
+        
+        # Analyze co-occurrence for top properties
+        top_properties = properties[:15]  # Limit for performance
+        
+        for i, prop in enumerate(top_properties):
+            try:
+                # Query to find properties that co-occur with this one
+                cooccur_query = f"""
+                    SELECT ?other_property (COUNT(DISTINCT ?subject) as ?cooccur_count) WHERE {{
+                        ?subject <{prop['uri']}> ?value1 .
+                        ?subject ?other_property ?value2 .
+                        FILTER(?other_property != <{prop['uri']}>)
+                    }} GROUP BY ?other_property 
+                    ORDER BY DESC(?cooccur_count) 
+                    LIMIT 15
+                """
+                
+                result = await self._execute_sparql(endpoint, cooccur_query)
+                queries_executed += 1
+                
+                cooccurrences = []
+                if "results" in result and result["results"]["bindings"]:
+                    for binding in result["results"]["bindings"]:
+                        other_prop = binding.get("other_property", {}).get("value", "")
+                        count = int(binding.get("cooccur_count", {}).get("value", "0"))
+                        
+                        if other_prop and count > 0:
+                            # Find the other property in our discovered list
+                            other_prop_info = next(
+                                (p for p in properties if p["uri"] == other_prop), 
+                                {"uri": other_prop, "prefixed_form": other_prop}
+                            )
+                            
+                            cooccurrences.append({
+                                "property": other_prop_info,
+                                "cooccurrence_count": count
+                            })
+                
+                cooccurrence_patterns[prop["uri"]] = {
+                    "property": prop,
+                    "cooccurrences": cooccurrences
+                }
+                
+                progress = 0.75 + (i / len(top_properties)) * 0.1
+                tracker.update_progress(
+                    f"Co-occurrence analysis", 
+                    progress, 
+                    f"Property {i+1}/{len(top_properties)}"
+                )
+                
+            except Exception as e:
+                log.debug(f"Co-occurrence analysis failed for {prop['uri']}: {e}")
+                cooccurrence_patterns[prop["uri"]] = {
+                    "property": prop,
+                    "cooccurrences": [],
+                    "analysis_error": str(e)
+                }
+        
+        return {
+            "phase": "cooccurrence_analysis",
+            "patterns": cooccurrence_patterns,
+            "queries_executed": queries_executed,
+            "properties_analyzed": len(cooccurrence_patterns)
+        }
+    
+    def _generate_property_templates_phase(
+        self,
+        properties: List[Dict[str, Any]],
+        usage_patterns: Dict[str, Any],
+        cooccurrence_patterns: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Phase 4: Generate query templates based on discovered patterns"""
+        
+        templates = {}
+        
+        # Template 1: Basic property exploration
+        if properties:
+            top_props = properties[:5]
+            select_vars = " ".join([f"?{prop['local_name']}" for prop in top_props])
+            optional_clauses = " ".join([
+                f"OPTIONAL {{ ?entity <{prop['uri']}> ?{prop['local_name']} }}" 
+                for prop in top_props
+            ])
+            
+            templates["explore_top_properties"] = {
+                "description": "Explore entities using top 5 most common properties",
+                "query": f"""
+                    SELECT ?entity {select_vars} WHERE {{
+                        ?entity ?any_property ?any_value .
+                        {optional_clauses}
+                    }} LIMIT 20
+                """,
+                "variables": ["entity"] + [prop['local_name'] for prop in top_props]
+            }
+        
+        # Template 2: Property frequency analysis
+        templates["property_frequency"] = {
+            "description": "Analyze property usage frequency across the endpoint",
+            "query": """
+                SELECT ?property (COUNT(*) as ?usage_count) WHERE {
+                    ?subject ?property ?object .
+                } GROUP BY ?property 
+                ORDER BY DESC(?usage_count) 
+                LIMIT 50
+            """,
+            "variables": ["property", "usage_count"]
+        }
+        
+        # Template 3: Co-occurrence patterns
+        if cooccurrence_patterns:
+            # Find a property with good co-occurrence data
+            best_cooccur = max(
+                cooccurrence_patterns.values(),
+                key=lambda x: len(x.get("cooccurrences", [])),
+                default=None
+            )
+            
+            if best_cooccur and best_cooccur.get("cooccurrences"):
+                prop = best_cooccur["property"]
+                top_cooccur = best_cooccur["cooccurrences"][0]
+                
+                templates["property_cooccurrence"] = {
+                    "description": f"Find entities with both {prop['prefixed_form']} and related properties",
+                    "query": f"""
+                        SELECT ?entity ?value1 ?value2 WHERE {{
+                            ?entity <{prop['uri']}> ?value1 .
+                            ?entity <{top_cooccur['property']['uri']}> ?value2 .
+                        }} LIMIT 20
+                    """,
+                    "variables": ["entity", "value1", "value2"],
+                    "pattern_properties": [prop['prefixed_form'], top_cooccur['property'].get('prefixed_form', 'related')]
+                }
+        
+        # Template 4: Type-based exploration
+        object_properties = [
+            uri for uri, pattern in usage_patterns.items() 
+            if pattern.get("is_object_property", False)
+        ]
+        
+        if object_properties:
+            example_prop = next(
+                (p for p in properties if p["uri"] == object_properties[0]), 
+                properties[0] if properties else None
+            )
+            
+            if example_prop:
+                templates["type_exploration"] = {
+                    "description": f"Explore entity types connected via {example_prop['prefixed_form']}",
+                    "query": f"""
+                        SELECT ?subject_type ?object_type (COUNT(*) as ?connection_count) WHERE {{
+                            ?subject <{example_prop['uri']}> ?object .
+                            OPTIONAL {{ ?subject a ?subject_type }}
+                            OPTIONAL {{ ?object a ?object_type }}
+                        }} GROUP BY ?subject_type ?object_type 
+                        ORDER BY DESC(?connection_count) 
+                        LIMIT 15
+                    """,
+                    "variables": ["subject_type", "object_type", "connection_count"]
+                }
+        
+        return {
+            "phase": "template_generation",
+            "templates": templates,
+            "template_count": len(templates)
+        }
+    
+    def _split_uri(self, uri: str) -> tuple[str, str]:
+        """Split URI into namespace and local name"""
+        if "#" in uri:
+            namespace, local_name = uri.rsplit("#", 1)
+            return namespace + "#", local_name
+        elif "/" in uri:
+            namespace, local_name = uri.rsplit("/", 1)
+            return namespace + "/", local_name
+        else:
+            return uri, ""
+    
+    def _summarize_usage_patterns(self, patterns: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate summary statistics from usage patterns"""
+        
+        total_properties = len(patterns)
+        object_properties = sum(1 for p in patterns.values() if p.get("is_object_property", False))
+        datatype_properties = sum(1 for p in patterns.values() if p.get("is_datatype_property", False))
+        
+        # Find most common object types
+        all_object_types = {}
+        for pattern in patterns.values():
+            for obj_type in pattern.get("object_types", []):
+                type_uri = obj_type["type"]
+                if type_uri != "literal":
+                    all_object_types[type_uri] = all_object_types.get(type_uri, 0) + obj_type["count"]
+        
+        top_object_types = sorted(all_object_types.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        return {
+            "total_properties": total_properties,
+            "object_properties": object_properties,
+            "datatype_properties": datatype_properties,
+            "mixed_properties": total_properties - object_properties - datatype_properties,
+            "top_object_types": [{"type": t[0], "usage_count": t[1]} for t in top_object_types]
+        }
+
+    # Entity-Known Discovery Helper Methods
+    async def _resolve_entity_uri(self, endpoint: str, entity_id: str) -> str:
+        """
+        Convert external entity ID to full URI for DESCRIBE queries
+        
+        Args:
+            endpoint: SPARQL endpoint URL
+            entity_id: External ID (like P01308) or full URI
+            
+        Returns:
+            Full URI for the entity
+        """
+        # If already a full URI, return as-is
+        if entity_id.startswith('http://') or entity_id.startswith('https://'):
+            return entity_id
+        
+        # Try to resolve using known patterns for different endpoints
+        if 'uniprot' in endpoint.lower():
+            # UniProt pattern: http://purl.uniprot.org/uniprot/P01308
+            return f"http://purl.uniprot.org/uniprot/{entity_id}"
+        elif 'wikidata' in endpoint.lower():
+            # Wikidata pattern: http://www.wikidata.org/entity/Q123
+            if entity_id.startswith('Q') or entity_id.startswith('P'):
+                return f"http://www.wikidata.org/entity/{entity_id}"
+        elif 'wikipathways' in endpoint.lower():
+            # WikiPathways pattern: need to discover
+            pass
+        
+        # Fallback: try simple exploration to find URI pattern
+        try:
+            # Try a simple SELECT to find example URIs
+            explore_query = f"""
+            SELECT DISTINCT ?uri WHERE {{
+                ?uri ?p ?o .
+                FILTER(CONTAINS(str(?uri), "{entity_id}"))
+            }} LIMIT 5
+            """
+            results = await self._execute_sparql(endpoint, explore_query)
+            bindings = results.get('results', {}).get('bindings', [])
+            if bindings:
+                return bindings[0]['uri']['value']
+        except:
+            pass
+        
+        # Last resort: return as-is and hope for the best
+        return entity_id
+    
+    def _extract_entity_affordances(self, describe_results: Dict[str, Any], entity_uri: str) -> Dict[str, Any]:
+        """
+        Extract affordances (capabilities) from DESCRIBE query results
+        
+        Args:
+            describe_results: Results from DESCRIBE query
+            entity_uri: URI of the described entity
+            
+        Returns:
+            Dict with extracted affordances
+        """
+        affordances = {
+            'properties': [],
+            'types': [],
+            'relationships': [],
+            'namespaces': set(),
+            'patterns': []
+        }
+        
+        bindings = describe_results.get('results', {}).get('bindings', [])
+        
+        for binding in bindings:
+            subject = binding.get('subject', {}).get('value', '')
+            predicate = binding.get('predicate', {}).get('value', '')
+            object_value = binding.get('object', {})
+            
+            # Only process triples where our entity is the subject
+            if subject == entity_uri:
+                # Extract property information
+                if predicate:
+                    property_info = {
+                        'uri': predicate,
+                        'object_type': object_value.get('type', 'unknown'),
+                        'object_value': object_value.get('value', '')
+                    }
+                    affordances['properties'].append(property_info)
+                    
+                    # Extract namespace
+                    if '#' in predicate:
+                        namespace = predicate.split('#')[0] + '#'
+                    elif '/' in predicate:
+                        namespace = '/'.join(predicate.split('/')[:-1]) + '/'
+                    else:
+                        namespace = predicate
+                    affordances['namespaces'].add(namespace)
+                    
+                    # Check for type declarations
+                    if predicate in ['http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+                                   'https://www.w3.org/1999/02/22-rdf-syntax-ns#type']:
+                        affordances['types'].append(object_value.get('value', ''))
+                    
+                    # Check for relationships to other entities
+                    if object_value.get('type') == 'uri':
+                        affordances['relationships'].append({
+                            'property': predicate,
+                            'target': object_value.get('value', '')
+                        })
+        
+        # Generate usage patterns
+        affordances['patterns'] = self._generate_affordance_patterns(affordances)
+        affordances['namespaces'] = list(affordances['namespaces'])
+        
+        return affordances
+    
+    def _generate_affordance_patterns(self, affordances: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate SPARQL query patterns from discovered affordances"""
+        patterns = []
+        
+        # Basic property pattern
+        if affordances['properties']:
+            prop_examples = affordances['properties'][:5]  # Top 5 properties
+            pattern = {
+                'name': 'entity_properties',
+                'description': 'Query properties of this entity type',
+                'variables': ['entity', 'property', 'value'],
+                'pattern': '?entity ?property ?value .',
+                'example_properties': [p['uri'] for p in prop_examples]
+            }
+            patterns.append(pattern)
+        
+        # Type-based pattern
+        if affordances['types']:
+            pattern = {
+                'name': 'entities_of_type',
+                'description': 'Find other entities of the same type',
+                'variables': ['entity', 'type'],
+                'pattern': '?entity rdf:type ?type .',
+                'example_types': affordances['types'][:3]
+            }
+            patterns.append(pattern)
+        
+        # Relationship pattern
+        if affordances['relationships']:
+            rel_examples = affordances['relationships'][:3]
+            pattern = {
+                'name': 'entity_relationships',
+                'description': 'Follow relationships from this entity',
+                'variables': ['source', 'property', 'target'],
+                'pattern': '?source ?property ?target .',
+                'example_relationships': [r['property'] for r in rel_examples]
+            }
+            patterns.append(pattern)
+        
+        return patterns
+    
+    def _build_schema_from_affordances(self, endpoint: str, entity_uri: str, affordances: Dict[str, Any]) -> 'EndpointSchema':
+        """Build EndpointSchema from entity affordances"""
+        # Extract vocabularies from namespaces
+        vocabularies = []
+        for namespace in affordances['namespaces']:
+            vocab = {
+                'namespace': namespace,
+                'prefix': self._extract_prefix_from_namespace(namespace),
+                'discovered_from': 'entity_affordances'
+            }
+            vocabularies.append(vocab)
+        
+        # Extract classes from types
+        classes = []
+        for type_uri in affordances['types']:
+            class_info = {
+                'uri': type_uri,
+                'label': type_uri.split('/')[-1].split('#')[-1],
+                'discovered_from': 'entity_type'
+            }
+            classes.append(class_info)
+        
+        # Extract properties from affordances
+        properties = []
+        for prop in affordances['properties']:
+            prop_info = {
+                'uri': prop['uri'],
+                'label': prop['uri'].split('/')[-1].split('#')[-1],
+                'range': prop['object_type'],
+                'discovered_from': 'entity_affordances'
+            }
+            properties.append(prop_info)
+        
+        # Create schema
+        schema = EndpointSchema(
+            endpoint=endpoint,
+            vocabularies=vocabularies,
+            classes=classes,
+            properties=properties,
+            query_patterns=affordances['patterns'],
+            discovery_metadata={
+                'method': 'entity_known_pathway',
+                'entity_uri': entity_uri,
+                'discovery_time': time.time()
+            }
+        )
+        
+        return schema
+    
+    # Property Affordance Discovery Helper Methods
+    async def _discover_entity_types(self, endpoint: str) -> List[Dict[str, Any]]:
+        """Discover what types of entities exist in the endpoint"""
+        try:
+            # Query for entity types with counts
+            type_query = """
+            SELECT DISTINCT ?type (COUNT(?entity) as ?count) WHERE {
+                ?entity rdf:type ?type .
+            } GROUP BY ?type 
+            ORDER BY DESC(?count) 
+            LIMIT 20
+            """
+            results = await self._execute_sparql(endpoint, type_query)
+            return results.get('results', {}).get('bindings', [])
+        except:
+            # Fallback: simple type discovery
+            simple_query = """
+            SELECT DISTINCT ?type WHERE {
+                ?entity rdf:type ?type .
+            } LIMIT 20
+            """
+            results = await self._execute_sparql(endpoint, simple_query)
+            bindings = results.get('results', {}).get('bindings', [])
+            # Convert to expected format
+            return [{'type': b, 'count': {'value': '0'}} for b in bindings]
+    
+    async def _discover_type_affordances(self, endpoint: str, type_uri: str) -> Dict[str, Any]:
+        """Discover what affordances are available for a specific type"""
+        try:
+            # Find properties used by entities of this type
+            affordance_query = f"""
+            SELECT DISTINCT ?property (COUNT(*) as ?usage) WHERE {{
+                ?entity rdf:type <{type_uri}> .
+                ?entity ?property ?value .
+            }} GROUP BY ?property 
+            ORDER BY DESC(?usage) 
+            LIMIT 50
+            """
+            results = await self._execute_sparql(endpoint, affordance_query)
+            properties = results.get('results', {}).get('bindings', [])
+            
+            return {
+                'type': type_uri,
+                'properties': properties,
+                'sample_count': len(properties)
+            }
+        except:
+            return {'type': type_uri, 'properties': [], 'sample_count': 0}
+    
+    def _build_schema_from_type_affordances(self, endpoint: str, entity_types: List[Dict[str, Any]], type_affordances: Dict[str, Dict[str, Any]]) -> 'EndpointSchema':
+        """Build comprehensive schema from type-based affordance discovery"""
+        vocabularies = []
+        classes = []
+        properties = []
+        query_patterns = []
+        
+        # Process entity types as classes
+        for entity_type in entity_types:
+            type_uri = entity_type.get('type', {}).get('value', '')
+            if type_uri:
+                class_info = {
+                    'uri': type_uri,
+                    'label': type_uri.split('/')[-1].split('#')[-1],
+                    'instance_count': entity_type.get('count', {}).get('value', '0'),
+                    'discovered_from': 'type_discovery'
+                }
+                classes.append(class_info)
+        
+        # Process affordances for each type
+        namespaces = set()
+        for type_uri, affordances in type_affordances.items():
+            for prop in affordances.get('properties', []):
+                prop_uri = prop.get('property', {}).get('value', '')
+                if prop_uri:
+                    prop_info = {
+                        'uri': prop_uri,
+                        'label': prop_uri.split('/')[-1].split('#')[-1],
+                        'usage_count': prop.get('usage', {}).get('value', '0'),
+                        'domain_type': type_uri,
+                        'discovered_from': 'type_affordances'
+                    }
+                    properties.append(prop_info)
+                    
+                    # Extract namespace
+                    if '#' in prop_uri:
+                        namespace = prop_uri.split('#')[0] + '#'
+                    elif '/' in prop_uri:
+                        namespace = '/'.join(prop_uri.split('/')[:-1]) + '/'
+                    else:
+                        namespace = prop_uri
+                    namespaces.add(namespace)
+        
+        # Generate vocabularies from namespaces
+        for namespace in namespaces:
+            vocab = {
+                'namespace': namespace,
+                'prefix': self._extract_prefix_from_namespace(namespace),
+                'discovered_from': 'type_affordances'
+            }
+            vocabularies.append(vocab)
+        
+        # Generate query patterns
+        if classes:
+            pattern = {
+                'name': 'type_exploration',
+                'description': 'Explore entities by type',
+                'variables': ['entity', 'type'],
+                'pattern': '?entity rdf:type ?type .',
+                'example_types': [c['uri'] for c in classes[:5]]
+            }
+            query_patterns.append(pattern)
+        
+        # Create schema
+        from .schema_discovery import EndpointSchema  # Import here to avoid circular imports
+        schema = EndpointSchema(
+            endpoint=endpoint,
+            vocabularies=vocabularies,
+            classes=classes,
+            properties=properties,
+            query_patterns=query_patterns,
+            discovery_metadata={
+                'method': 'property_affordance_pathway',
+                'types_discovered': len(entity_types),
+                'total_properties': len(properties),
+                'discovery_time': time.time()
+            }
+        )
+        
+        return schema
+    
+    # Progressive Property Affordance Discovery Methods
+    async def _discover_ontology_properties(self, endpoint: str) -> List[Dict[str, Any]]:
+        """
+        Phase 1: Discover properties through ontology introspection
+        
+        Look for explicit property declarations (OWL/RDFS) in the endpoint's ontology.
+        """
+        ontology_queries = [
+            # OWL style - most comprehensive
+            """
+            SELECT DISTINCT ?property ?label ?comment ?domain ?range WHERE {
+                { ?property rdf:type owl:ObjectProperty }
+                UNION 
+                { ?property rdf:type owl:DatatypeProperty }
+                OPTIONAL { ?property rdfs:label ?label }
+                OPTIONAL { ?property rdfs:comment ?comment }
+                OPTIONAL { ?property rdfs:domain ?domain }
+                OPTIONAL { ?property rdfs:range ?range }
+            } LIMIT 50
+            """,
+            
+            # RDFS style - simpler fallback
+            """
+            SELECT DISTINCT ?property ?label ?comment WHERE {
+                ?property rdf:type rdfs:Property .
+                OPTIONAL { ?property rdfs:label ?label }
+                OPTIONAL { ?property rdfs:comment ?comment }
+            } LIMIT 50
+            """,
+            
+            # Schema.org style - web-focused
+            """
+            SELECT DISTINCT ?property ?label WHERE {
+                ?property rdf:type rdf:Property .
+                OPTIONAL { ?property rdfs:label ?label }
+            } LIMIT 50
+            """
+        ]
+        
+        for query in ontology_queries:
+            try:
+                results = await self._execute_sparql(endpoint, query)
+                bindings = results.get('results', {}).get('bindings', [])
+                
+                if bindings:
+                    # Convert to structured format
+                    properties = []
+                    for binding in bindings:
+                        prop_info = {
+                            'uri': binding.get('property', {}).get('value', ''),
+                            'label': binding.get('label', {}).get('value', ''),
+                            'comment': binding.get('comment', {}).get('value', ''),
+                            'domain': binding.get('domain', {}).get('value', ''),
+                            'range': binding.get('range', {}).get('value', ''),
+                            'discovery_method': 'ontology_introspection'
+                        }
+                        if prop_info['uri']:
+                            properties.append(prop_info)
+                    
+                    if properties:
+                        log.info(f"Found {len(properties)} ontology properties in {endpoint}")
+                        return properties
+                        
+            except Exception as e:
+                log.debug(f"Ontology query failed for {endpoint}: {e}")
+                continue
+        
+        return []
+    
+    async def _discover_usage_properties(self, endpoint: str) -> List[Dict[str, Any]]:
+        """
+        Phase 2: Discover properties through usage analysis
+        
+        Find properties by analyzing what predicates are actually used in the data.
+        """
+        usage_queries = [
+            # Simple property enumeration
+            """
+            SELECT DISTINCT ?property (COUNT(*) as ?usage) WHERE {
+                ?subject ?property ?object .
+                FILTER(!isBlank(?subject))
+            } GROUP BY ?property 
+            ORDER BY DESC(?usage) 
+            LIMIT 30
+            """,
+            
+            # Fallback without aggregation
+            """
+            SELECT DISTINCT ?property WHERE {
+                ?subject ?property ?object .
+            } LIMIT 30
+            """
+        ]
+        
+        for query in usage_queries:
+            try:
+                results = await self._execute_sparql(endpoint, query)
+                bindings = results.get('results', {}).get('bindings', [])
+                
+                if bindings:
+                    properties = []
+                    for binding in bindings:
+                        prop_uri = binding.get('property', {}).get('value', '')
+                        usage_count = binding.get('usage', {}).get('value', '0')
+                        
+                        if prop_uri:
+                            # Extract label from URI
+                            if '#' in prop_uri:
+                                label = prop_uri.split('#')[-1]
+                            elif '/' in prop_uri:
+                                label = prop_uri.split('/')[-1]
+                            else:
+                                label = prop_uri
+                            
+                            prop_info = {
+                                'uri': prop_uri,
+                                'label': label,
+                                'usage_count': usage_count,
+                                'discovery_method': 'usage_analysis'
+                            }
+                            properties.append(prop_info)
+                    
+                    if properties:
+                        log.info(f"Found {len(properties)} usage properties in {endpoint}")
+                        return properties
+                        
+            except Exception as e:
+                log.debug(f"Usage query failed for {endpoint}: {e}")
+                continue
+        
+        return []
+    
+    async def _build_schema_from_ontology_properties(self, endpoint: str, ontology_properties: List[Dict[str, Any]]) -> EndpointSchema:
+        """Build schema from ontology-declared properties with rich metadata"""
+        
+        # Extract vocabularies from namespaces
+        vocabularies = []
+        namespaces = set()
+        for prop in ontology_properties:
+            prop_uri = prop['uri']
+            if '#' in prop_uri:
+                namespace = prop_uri.split('#')[0] + '#'
+            elif '/' in prop_uri:
+                namespace = '/'.join(prop_uri.split('/')[:-1]) + '/'
+            else:
+                continue
+            namespaces.add(namespace)
+        
+        for namespace in namespaces:
+            vocab = {
+                'namespace': namespace,
+                'prefix': self._extract_prefix_from_namespace(namespace),
+                'discovered_from': 'ontology_introspection'
+            }
+            vocabularies.append(vocab)
+        
+        # Extract classes from domains/ranges
+        classes = []
+        class_uris = set()
+        for prop in ontology_properties:
+            if prop.get('domain'):
+                class_uris.add(prop['domain'])
+            if prop.get('range') and not prop['range'].startswith('http://www.w3.org/2001/XMLSchema'):
+                class_uris.add(prop['range'])
+        
+        for class_uri in class_uris:
+            class_info = {
+                'uri': class_uri,
+                'label': class_uri.split('/')[-1].split('#')[-1],
+                'discovered_from': 'ontology_introspection'
+            }
+            classes.append(class_info)
+        
+        # Properties are already in good format
+        properties = ontology_properties
+        
+        # Generate query patterns based on property semantics
+        query_patterns = []
+        if properties:
+            # Basic property pattern
+            pattern = {
+                'name': 'ontology_properties',
+                'description': 'Query using ontology-declared properties',
+                'variables': ['subject', 'property', 'object'],
+                'pattern': '?subject ?property ?object .',
+                'example_properties': [p['uri'] for p in properties[:5]]
+            }
+            query_patterns.append(pattern)
+            
+            # Domain-specific patterns
+            domain_properties = [p for p in properties if p.get('domain')]
+            if domain_properties:
+                pattern = {
+                    'name': 'typed_properties',
+                    'description': 'Query properties with known domains',
+                    'variables': ['entity', 'property', 'value'],
+                    'pattern': '?entity rdf:type ?type . ?entity ?property ?value .',
+                    'example_domains': list(set(p['domain'] for p in domain_properties[:3]))
+                }
+                query_patterns.append(pattern)
+        
+        return EndpointSchema(
+            endpoint=endpoint,
+            vocabularies=vocabularies,
+            classes=classes,
+            properties=properties,
+            query_patterns=query_patterns,
+            discovery_metadata={
+                'method': 'property_affordance_pathway',
+                'approach': 'ontology_introspection',
+                'properties_discovered': len(properties),
+                'discovery_time': time.time()
+            }
+        )
+    
+    async def _build_schema_from_usage_properties(self, endpoint: str, usage_properties: List[Dict[str, Any]]) -> EndpointSchema:
+        """Build schema from usage-discovered properties"""
+        
+        # Extract vocabularies from namespaces
+        vocabularies = []
+        namespaces = set()
+        for prop in usage_properties:
+            prop_uri = prop['uri']
+            if '#' in prop_uri:
+                namespace = prop_uri.split('#')[0] + '#'
+            elif '/' in prop_uri:
+                namespace = '/'.join(prop_uri.split('/')[:-1]) + '/'
+            else:
+                continue
+            namespaces.add(namespace)
+        
+        for namespace in namespaces:
+            vocab = {
+                'namespace': namespace,
+                'prefix': self._extract_prefix_from_namespace(namespace),
+                'discovered_from': 'usage_analysis'
+            }
+            vocabularies.append(vocab)
+        
+        # No explicit classes from usage analysis
+        classes = []
+        
+        # Properties from usage analysis
+        properties = usage_properties
+        
+        # Generate simple query patterns
+        query_patterns = []
+        if properties:
+            pattern = {
+                'name': 'usage_properties',
+                'description': 'Query using frequently used properties',
+                'variables': ['subject', 'property', 'object'],
+                'pattern': '?subject ?property ?object .',
+                'example_properties': [p['uri'] for p in properties[:5]]
+            }
+            query_patterns.append(pattern)
+        
+        return EndpointSchema(
+            endpoint=endpoint,
+            vocabularies=vocabularies,
+            classes=classes,
+            properties=properties,
+            query_patterns=query_patterns,
+            discovery_metadata={
+                'method': 'property_affordance_pathway',
+                'approach': 'usage_based',
+                'properties_discovered': len(properties),
+                'discovery_time': time.time()
+            }
+        )
+    
+    async def _enhance_with_ontology_dereferencing(self, schema: EndpointSchema) -> EndpointSchema:
+        """
+        Enhancement step: Ontology dereferencing using OntoFetch tool
+        
+        Extracts namespaces from discovered vocabularies, attempts to dereference 
+        ontology URLs, and enriches schema with additional properties from fetched ontologies.
+        
+        This is a non-blocking enhancement that gracefully fails if ontology 
+        dereferencing is unavailable or fails.
+        """
+        try:
+            # Import OntoFetch functionality
+            from ..cli.cl_ontfetch import AgenticOntologyFetcher
+            ontology_fetcher = AgenticOntologyFetcher()
+            
+            # Extract ontology URIs from discovered vocabularies
+            ontology_uris_to_fetch = self._extract_ontology_uris_from_schema(schema)
+            
+            # Track enhancement metadata
+            enhancement_metadata = {
+                'ontology_uris_attempted': len(ontology_uris_to_fetch),
+                'ontology_uris_successfully_dereferenced': 0,
+                'additional_properties_discovered': 0,
+                'enhancement_enabled': True,
+                'attempted_uris': ontology_uris_to_fetch[:5]  # For debugging
+            }
+            
+            log.debug(f"Ontology dereferencing attempting {len(ontology_uris_to_fetch)} URIs: {ontology_uris_to_fetch}")
+            
+            # Attempt to dereference each ontology URI (with reasonable limits)
+            max_ontologies_to_fetch = 5  # Reasonable limit to prevent long delays
+            additional_properties = []
+            
+            for ontology_uri in ontology_uris_to_fetch[:max_ontologies_to_fetch]:
+                try:
+                    # Check if this URI/prefix is already in cache (user's request)
+                    cache_key = f"ontology_dereferencing_{hash(ontology_uri)}"
+                    cached_ontology = self.cache.get(cache_key)
+                    
+                    if cached_ontology:
+                        log.debug(f"Skipping cached ontology: {ontology_uri}")
+                        continue
+                    
+                    log.debug(f"Attempting ontology dereferencing for: {ontology_uri}")
+                    
+                    # Use OntoFetch to discover the ontology
+                    ontology_result = await ontology_fetcher.discover_ontology(
+                        target=ontology_uri,
+                        ontology_type="sparql" if "sparql" in ontology_uri else "discover",
+                        domain=self._infer_domain_from_uri(ontology_uri),
+                        force_refresh=False
+                    )
+                    
+                    if ontology_result.get("success") and ontology_result.get("properties"):
+                        enhancement_metadata['ontology_uris_successfully_dereferenced'] += 1
+                        
+                        # Extract additional properties from dereferenced ontology (list format)
+                        ontology_properties = ontology_result.get("properties", [])
+                        
+                        for prop_info in ontology_properties:
+                            # Create property entry compatible with schema format
+                            additional_prop = {
+                                'uri': prop_info.get('uri', ''),
+                                'label': prop_info.get('label', ''),
+                                'comment': prop_info.get('comment', ''),
+                                'domain': prop_info.get('domain', ''),
+                                'range': prop_info.get('range', ''),
+                                'property_type': prop_info.get('property_type', ''),
+                                'discovery_method': 'ontology_dereferencing',
+                                'dereferenced_from': ontology_uri
+                            }
+                            if additional_prop['uri']:  # Only add if we have a valid URI
+                                additional_properties.append(additional_prop)
+                        
+                        # Cache the successful result
+                        self.cache.set(cache_key, ontology_result)
+                        
+                        log.info(f"Successfully dereferenced ontology {ontology_uri}: found {len(ontology_properties)} additional properties")
+                    
+                except Exception as e:
+                    log.debug(f"Failed to dereference ontology {ontology_uri}: {e}")
+                    continue
+            
+            # Merge additional properties into schema
+            if additional_properties:
+                # Create enhanced schema with additional properties
+                enhanced_properties = list(schema.properties) + additional_properties
+                enhancement_metadata['additional_properties_discovered'] = len(additional_properties)
+                
+                enhanced_schema = EndpointSchema(
+                    endpoint=schema.endpoint,
+                    vocabularies=schema.vocabularies,
+                    classes=schema.classes,
+                    properties=enhanced_properties,
+                    query_patterns=schema.query_patterns,
+                    performance_hints=schema.performance_hints,
+                    agent_guidance=schema.agent_guidance,
+                    discovery_metadata={
+                        **schema.discovery_metadata,
+                        'ontology_enhancement': enhancement_metadata
+                    }
+                )
+                
+                log.info(f"Schema enhanced with {len(additional_properties)} properties from ontology dereferencing")
+                return enhanced_schema
+            else:
+                # No enhancement possible, but record that we tried
+                schema.discovery_metadata['ontology_enhancement'] = enhancement_metadata
+                log.debug("No additional properties discovered through ontology dereferencing")
+                return schema
+                
+        except ImportError:
+            log.debug("OntoFetch not available for ontology dereferencing enhancement")
+            schema.discovery_metadata['ontology_enhancement'] = {
+                'enhancement_enabled': False,
+                'reason': 'OntoFetch not available'
+            }
+            return schema
+        except Exception as e:
+            log.debug(f"Ontology dereferencing enhancement failed: {e}")
+            schema.discovery_metadata['ontology_enhancement'] = {
+                'enhancement_enabled': False,
+                'reason': str(e)
+            }
+            return schema
+    
+    def _extract_ontology_uris_from_schema(self, schema: EndpointSchema) -> List[str]:
+        """Extract potential ontology URIs from discovered vocabularies for dereferencing"""
+        
+        ontology_uris = []
+        
+        for vocab in schema.vocabularies:
+            namespace = vocab.get('namespace', '')
+            
+            # Skip standard W3C vocabularies that don't need dereferencing
+            skip_namespaces = [
+                'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+                'http://www.w3.org/2000/01/rdf-schema#',
+                'http://www.w3.org/2002/07/owl#',
+                'http://www.w3.org/2001/XMLSchema#',
+                'http://www.w3.org/2004/02/skos/core#'
+            ]
+            
+            if namespace and namespace not in skip_namespaces:
+                # Convert namespace to potential ontology URI
+                # Remove trailing # or / to get base ontology URI
+                if namespace.endswith('#'):
+                    base_uri = namespace[:-1]
+                elif namespace.endswith('/'):
+                    base_uri = namespace[:-1]
+                else:
+                    base_uri = namespace
+                
+                # Look for common ontology patterns
+                if any(pattern in base_uri for pattern in [
+                    'purl.org', 'w3id.org', 'bioschemas.org', 'schema.org',
+                    'purl.uniprot.org', 'purl.obolibrary.org', 'vocabularies.wikipathways.org',
+                    'purl.org/dc', 'xmlns.com', 'dbpedia.org/ontology'
+                ]):
+                    ontology_uris.append(base_uri)
+        
+        return ontology_uris
+    
+    def _infer_domain_from_uri(self, ontology_uri: str) -> Optional[str]:
+        """Infer biological domain from ontology URI for better OntoFetch performance"""
+        
+        domain_patterns = {
+            'proteins': ['uniprot', 'pdb', 'pfam', 'interpro'],
+            'chemicals': ['chebi', 'chembl', 'pubchem'],
+            'pathways': ['wikipathways', 'reactome', 'kegg'],
+            'biology': ['go', 'obo', 'bioschemas'],
+            'general': ['schema.org', 'dc', 'dcterms', 'foaf']
+        }
+        
+        uri_lower = ontology_uri.lower()
+        for domain, patterns in domain_patterns.items():
+            if any(pattern in uri_lower for pattern in patterns):
+                return domain
+        
+        return None
 
 
 # Global discovery engine instance

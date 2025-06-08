@@ -189,8 +189,8 @@ class AgenticOntologyFetcher:
                 "source": endpoint_url,
                 "domain": domain or endpoint_info.get("domain", "general"),
                 "vocabularies": schema.vocabularies,
-                "classes": {k: v for k, v in schema.classes.items()},
-                "properties": {k: v for k, v in schema.properties.items()},
+                "classes": [cls for cls in schema.classes],  # Convert to list format
+                "properties": [prop for prop in schema.properties],  # Convert to list format
                 "query_patterns": getattr(schema, 'common_patterns', {}),
                 "agent_guidance": schema.agent_guidance,
                 "performance_hints": schema.performance_hints,
@@ -335,12 +335,25 @@ class AgenticOntologyFetcher:
         }
     
     async def _discover_by_name(self, name: str, domain: Optional[str]) -> Dict[str, Any]:
-        """Discover ontology by name using agentic search"""
+        """Discover ontology by name using agentic search + HTTP dereferencing"""
         
         # Check known endpoints first
         if name.lower() in self.known_endpoints:
             endpoint_info = self.known_endpoints[name.lower()]
             return await self._discover_sparql_ontology(endpoint_info["sparql_endpoint"], domain)
+        
+        # Try HTTP dereferencing if it looks like a URI
+        if name.startswith(('http://', 'https://')):
+            return await self._http_dereference_ontology(name, domain)
+        
+        # Search in vocabulary registry
+        try:
+            vocab_entry = registry.resolve(name)
+            primary_uri = vocab_entry.uris.get("primary")
+            if primary_uri:
+                return await self._http_dereference_ontology(str(primary_uri), domain)
+        except KeyError:
+            pass
         
         # This would use agentic search to find the ontology
         return {
@@ -350,10 +363,428 @@ class AgenticOntologyFetcher:
                 "message": f"Unknown ontology name: {name}",
                 "suggestions": [
                     f"Try cl_ontfetch sparql <endpoint_url>",
+                    f"Try providing a full HTTP URI for dereferencing",
                     f"Available known ontologies: {', '.join(self.known_endpoints.keys())}"
                 ]
             }
         }
+    
+    async def _http_dereference_ontology(self, ontology_uri: str, domain: Optional[str]) -> Dict[str, Any]:
+        """
+        HTTP dereference ontology URI using RDFLib with proper content negotiation
+        
+        This implements true ontology dereferencing:
+        1. HTTP GET with proper Accept headers for RDF content
+        2. RDFLib parsing of RDF/OWL/Turtle documents
+        3. Semantic extraction of properties and classes
+        4. Integration with vocabulary registry
+        """
+        try:
+            import httpx
+            import rdflib
+            from rdflib.namespace import OWL, RDFS, RDF
+            
+            # Content negotiation for RDF formats
+            accept_headers = {
+                'Accept': ', '.join([
+                    'text/turtle;q=0.9',
+                    'application/rdf+xml;q=0.8', 
+                    'application/n-triples;q=0.7',
+                    'application/ld+json;q=0.6',
+                    'text/n3;q=0.5',
+                    'application/xml;q=0.4',
+                    'text/xml;q=0.3'
+                ]),
+                'User-Agent': 'CogitareLink/1.0 (Ontology Dereferencer; +https://github.com/cogitarelink)'
+            }
+            
+            # Try multiple strategies for dereferencing
+            attempted_uris = await self._generate_dereference_candidates(ontology_uri)
+            
+            for uri_candidate in attempted_uris:
+                try:
+                    log.debug(f"Attempting HTTP dereferencing: {uri_candidate}")
+                    
+                    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                        response = await client.get(uri_candidate, headers=accept_headers)
+                        
+                        if response.status_code == 200:
+                            # Parse RDF content using RDFLib
+                            rdf_graph = self._parse_rdf_content(
+                                response.content, 
+                                response.headers.get('content-type', ''),
+                                uri_candidate
+                            )
+                            
+                            if rdf_graph and len(rdf_graph) > 0:
+                                # Extract semantic information
+                                semantic_info = self._extract_semantic_info(rdf_graph, ontology_uri, domain)
+                                
+                                # Register in vocabulary system if valuable
+                                await self._register_discovered_vocabulary(ontology_uri, semantic_info)
+                                
+                                return {
+                                    "success": True,
+                                    "ontology_type": "http_dereferenced",
+                                    "source": uri_candidate,
+                                    "original_uri": ontology_uri,
+                                    "domain": domain or self._infer_domain_from_content(semantic_info),
+                                    **semantic_info,
+                                    "metadata": {
+                                        "dereferencing_method": "http_rdf_parsing",
+                                        "content_type": response.headers.get('content-type'),
+                                        "triples_count": len(rdf_graph),
+                                        "successful_uri": uri_candidate,
+                                        "attempted_uris": attempted_uris,
+                                        "claude_guidance": self._generate_claude_guidance(semantic_info, domain)
+                                    }
+                                }
+                        
+                except httpx.RequestError as e:
+                    log.debug(f"HTTP request failed for {uri_candidate}: {e}")
+                    continue
+                except Exception as e:
+                    log.debug(f"Failed to process {uri_candidate}: {e}")
+                    continue
+            
+            # All dereferencing attempts failed
+            return {
+                "success": False,
+                "error": {
+                    "code": "DEREFERENCING_FAILED", 
+                    "message": f"Could not dereference ontology URI: {ontology_uri}",
+                    "attempted_uris": attempted_uris,
+                    "suggestions": [
+                        "Check if the URI is publicly accessible",
+                        "Try alternative URI patterns (with/without trailing slash, .ttl, .rdf extensions)",
+                        "Verify the ontology is published in a standard RDF format",
+                        "Consider using a SPARQL endpoint if available"
+                    ]
+                }
+            }
+            
+        except ImportError as e:
+            return {
+                "success": False,
+                "error": {
+                    "code": "MISSING_DEPENDENCIES",
+                    "message": f"Missing required dependencies for HTTP dereferencing: {e}",
+                    "suggestions": [
+                        "Install httpx: pip install httpx",
+                        "Install rdflib: pip install rdflib"
+                    ]
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": {
+                    "code": "DEREFERENCING_ERROR",
+                    "message": f"HTTP dereferencing failed: {e}",
+                    "suggestions": [
+                        "Check network connectivity",
+                        "Verify URI format is correct",
+                        "Try with a different ontology URI"
+                    ]
+                }
+            }
+    
+    async def _generate_dereference_candidates(self, base_uri: str) -> List[str]:
+        """Generate candidate URIs for dereferencing based on common patterns"""
+        candidates = [base_uri]  # Start with original URI
+        
+        # Remove fragment if present
+        if '#' in base_uri:
+            base_without_fragment = base_uri.split('#')[0]
+            candidates.append(base_without_fragment)
+        
+        # Try common file extensions
+        base_clean = base_uri.rstrip('/#')
+        for ext in ['.ttl', '.rdf', '.owl', '.n3', '.nt']:
+            candidates.append(f"{base_clean}{ext}")
+        
+        # Try common path patterns
+        candidates.extend([
+            f"{base_clean}/ontology",
+            f"{base_clean}/vocab", 
+            f"{base_clean}/schema",
+            f"{base_clean}.jsonld",
+            f"{base_uri}#",  # Add fragment back
+        ])
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(candidates))
+    
+    def _parse_rdf_content(self, content: bytes, content_type: str, uri: str) -> Optional['rdflib.Graph']:
+        """Parse RDF content using RDFLib with format detection"""
+        try:
+            import rdflib
+            
+            graph = rdflib.Graph()
+            
+            # Format detection based on content type
+            format_map = {
+                'text/turtle': 'turtle',
+                'application/x-turtle': 'turtle',
+                'application/rdf+xml': 'xml',
+                'text/rdf+xml': 'xml',
+                'application/xml': 'xml',
+                'text/xml': 'xml',
+                'application/n-triples': 'nt',
+                'text/n3': 'n3',
+                'application/ld+json': 'json-ld',
+                'application/json': 'json-ld'
+            }
+            
+            # Try to determine format from content type
+            rdf_format = None
+            for ct, fmt in format_map.items():
+                if ct in content_type.lower():
+                    rdf_format = fmt
+                    break
+            
+            # Try to parse with detected format
+            if rdf_format:
+                try:
+                    graph.parse(data=content, format=rdf_format)
+                    log.debug(f"Successfully parsed {len(graph)} triples as {rdf_format}")
+                    return graph
+                except Exception as e:
+                    log.debug(f"Failed to parse as {rdf_format}: {e}")
+            
+            # Fallback: try multiple formats
+            formats_to_try = ['turtle', 'xml', 'n3', 'nt', 'json-ld']
+            for fmt in formats_to_try:
+                try:
+                    graph = rdflib.Graph()  # Fresh graph for each attempt
+                    graph.parse(data=content, format=fmt)
+                    log.debug(f"Successfully parsed {len(graph)} triples as {fmt}")
+                    return graph
+                except Exception:
+                    continue
+            
+            log.debug(f"Failed to parse RDF content from {uri}")
+            return None
+            
+        except ImportError:
+            log.error("RDFLib not available for parsing")
+            return None
+        except Exception as e:
+            log.debug(f"RDF parsing error: {e}")
+            return None
+    
+    def _extract_semantic_info(self, graph: 'rdflib.Graph', ontology_uri: str, domain: Optional[str]) -> Dict[str, Any]:
+        """Extract semantic information from RDF graph"""
+        try:
+            import rdflib
+            from rdflib.namespace import OWL, RDFS, RDF, DCTERMS, SKOS
+            
+            # Extract vocabularies/namespaces
+            vocabularies = []
+            namespaces = dict(graph.namespaces())
+            for prefix, namespace in namespaces.items():
+                if prefix and str(namespace):  # Skip empty prefixes
+                    vocabularies.append({
+                        'prefix': str(prefix),
+                        'namespace': str(namespace),
+                        'discovered_from': 'rdf_dereferencing'
+                    })
+            
+            # Extract properties (OWL and RDFS)
+            properties = []
+            
+            # OWL Properties
+            for prop_type in [OWL.ObjectProperty, OWL.DatatypeProperty, OWL.AnnotationProperty]:
+                for prop in graph.subjects(RDF.type, prop_type):
+                    prop_info = self._extract_property_info(graph, prop, prop_type)
+                    if prop_info:
+                        properties.append(prop_info)
+            
+            # RDFS Properties
+            for prop in graph.subjects(RDF.type, RDF.Property):
+                prop_info = self._extract_property_info(graph, prop, RDF.Property)
+                if prop_info:
+                    properties.append(prop_info)
+            
+            # Extract classes
+            classes = []
+            for cls in graph.subjects(RDF.type, OWL.Class):
+                class_info = self._extract_class_info(graph, cls)
+                if class_info:
+                    classes.append(class_info)
+            
+            # RDFS Classes
+            for cls in graph.subjects(RDF.type, RDFS.Class):
+                class_info = self._extract_class_info(graph, cls)
+                if class_info:
+                    classes.append(class_info)
+            
+            return {
+                "vocabularies": vocabularies,
+                "properties": properties,
+                "classes": classes,
+                "query_patterns": self._generate_query_patterns(properties, classes),
+                "agent_guidance": [],  # Will be populated later
+                "performance_hints": [
+                    f"Ontology contains {len(properties)} properties and {len(classes)} classes",
+                    f"Parsed {len(graph)} RDF triples from {ontology_uri}"
+                ]
+            }
+            
+        except ImportError:
+            return {"vocabularies": [], "properties": [], "classes": []}
+        except Exception as e:
+            log.debug(f"Semantic extraction error: {e}")
+            return {"vocabularies": [], "properties": [], "classes": []}
+    
+    def _extract_property_info(self, graph: 'rdflib.Graph', prop: 'rdflib.term.Node', prop_type: 'rdflib.term.Node') -> Optional[Dict[str, Any]]:
+        """Extract detailed property information from RDF graph"""
+        try:
+            import rdflib
+            from rdflib.namespace import RDFS, OWL, DCTERMS
+            
+            prop_uri = str(prop)
+            
+            # Extract labels and comments
+            label = graph.value(prop, RDFS.label)
+            comment = graph.value(prop, RDFS.comment)
+            domain = graph.value(prop, RDFS.domain)
+            range_val = graph.value(prop, RDFS.range)
+            
+            return {
+                'uri': prop_uri,
+                'label': str(label) if label else prop_uri.split('/')[-1].split('#')[-1],
+                'comment': str(comment) if comment else '',
+                'domain': str(domain) if domain else '',
+                'range': str(range_val) if range_val else '',
+                'property_type': str(prop_type),
+                'discovery_method': 'rdf_dereferencing'
+            }
+            
+        except Exception as e:
+            log.debug(f"Property extraction error for {prop}: {e}")
+            return None
+    
+    def _extract_class_info(self, graph: 'rdflib.Graph', cls: 'rdflib.term.Node') -> Optional[Dict[str, Any]]:
+        """Extract detailed class information from RDF graph"""
+        try:
+            import rdflib
+            from rdflib.namespace import RDFS, OWL
+            
+            cls_uri = str(cls)
+            
+            # Extract labels and comments
+            label = graph.value(cls, RDFS.label)
+            comment = graph.value(cls, RDFS.comment)
+            subclass_of = list(graph.objects(cls, RDFS.subClassOf))
+            
+            return {
+                'uri': cls_uri,
+                'label': str(label) if label else cls_uri.split('/')[-1].split('#')[-1],
+                'comment': str(comment) if comment else '',
+                'subclass_of': [str(sc) for sc in subclass_of],
+                'discovery_method': 'rdf_dereferencing'
+            }
+            
+        except Exception as e:
+            log.debug(f"Class extraction error for {cls}: {e}")
+            return None
+    
+    def _generate_query_patterns(self, properties: List[Dict], classes: List[Dict]) -> List[Dict[str, Any]]:
+        """Generate SPARQL query patterns from discovered properties and classes"""
+        patterns = []
+        
+        if properties:
+            # Basic property pattern
+            patterns.append({
+                'name': 'dereferenced_properties',
+                'description': 'Query using dereferenced ontology properties',
+                'variables': ['subject', 'object'],
+                'example_properties': [p['uri'] for p in properties[:5]]
+            })
+        
+        if classes:
+            # Class instantiation pattern
+            patterns.append({
+                'name': 'dereferenced_classes',
+                'description': 'Query instances of dereferenced ontology classes', 
+                'variables': ['instance'],
+                'example_classes': [c['uri'] for c in classes[:5]]
+            })
+        
+        return patterns
+    
+    def _infer_domain_from_content(self, semantic_info: Dict[str, Any]) -> str:
+        """Infer domain from semantic content"""
+        vocabularies = semantic_info.get('vocabularies', [])
+        properties = semantic_info.get('properties', [])
+        classes = semantic_info.get('classes', [])
+        
+        # Look for domain indicators in URIs and labels
+        all_text = ' '.join([
+            ' '.join(v.get('namespace', '') for v in vocabularies),
+            ' '.join(p.get('uri', '') + ' ' + p.get('label', '') for p in properties),
+            ' '.join(c.get('uri', '') + ' ' + c.get('label', '') for c in classes)
+        ]).lower()
+        
+        if any(term in all_text for term in ['protein', 'gene', 'uniprot', 'bio']):
+            return 'biology'
+        elif any(term in all_text for term in ['chemical', 'compound', 'molecule']):
+            return 'chemistry'  
+        elif any(term in all_text for term in ['pathway', 'reaction', 'process']):
+            return 'pathways'
+        elif any(term in all_text for term in ['geo', 'location', 'place']):
+            return 'geography'
+        else:
+            return 'general'
+    
+    def _generate_claude_guidance(self, semantic_info: Dict[str, Any], domain: Optional[str]) -> List[str]:
+        """Generate Claude-specific guidance for using the dereferenced ontology"""
+        guidance = []
+        
+        properties = semantic_info.get('properties', [])
+        classes = semantic_info.get('classes', [])
+        
+        if properties:
+            guidance.append(f"🔗 ONTOLOGY PROPERTIES: Found {len(properties)} properties for semantic queries")
+            
+            # Highlight important property types
+            object_props = [p for p in properties if 'ObjectProperty' in p.get('property_type', '')]
+            data_props = [p for p in properties if 'DatatypeProperty' in p.get('property_type', '')]
+            
+            if object_props:
+                guidance.append(f"🌐 OBJECT PROPERTIES: {len(object_props)} relationship properties available")
+            if data_props:
+                guidance.append(f"📊 DATA PROPERTIES: {len(data_props)} literal value properties available")
+        
+        if classes:
+            guidance.append(f"🏗️ ONTOLOGY CLASSES: Found {len(classes)} classes for type-based queries")
+            
+            # Highlight class hierarchies
+            hierarchical_classes = [c for c in classes if c.get('subclass_of')]
+            if hierarchical_classes:
+                guidance.append(f"🔗 CLASS HIERARCHY: {len(hierarchical_classes)} classes have parent relationships")
+        
+        # Domain-specific guidance
+        if domain == 'biology':
+            guidance.append("🧬 BIOLOGICAL WORKFLOW: Use properties for protein→gene→pathway→disease relationships")
+        elif domain == 'chemistry':
+            guidance.append("⚗️ CHEMICAL WORKFLOW: Use properties for compound→structure→reaction relationships")
+        
+        guidance.append("💡 USAGE: Properties can be used directly in SPARQL queries with discovered URIs")
+        
+        return guidance
+    
+    async def _register_discovered_vocabulary(self, ontology_uri: str, semantic_info: Dict[str, Any]):
+        """Register discovered vocabulary in CogitareLink's vocabulary system"""
+        try:
+            # This would integrate with the vocabulary registry
+            # For now, just cache the information
+            cache_key = f"discovered_vocab_{hash(ontology_uri)}"
+            self.ontology_cache.set(cache_key, semantic_info)
+            log.debug(f"Cached discovered vocabulary for {ontology_uri}")
+        except Exception as e:
+            log.debug(f"Failed to register vocabulary {ontology_uri}: {e}")
     
     async def _integrate_with_vocabulary_manager(
         self, 
