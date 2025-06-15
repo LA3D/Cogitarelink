@@ -27,6 +27,7 @@ dependencies = [
     "sparqlwrapper>=2.0.0",
     "diskcache>=5.6.3",
     "python-dateutil>=2.8.2",
+    "claude-code-sdk>=0.0.10",
 ]
 
 [project.optional-dependencies]
@@ -40,20 +41,20 @@ dev = [
 ]
 
 [project.scripts]
-cl_discover = "cogitarelink.cli.cl_discover:discover"
-cl_sparql = "cogitarelink.cli.cl_sparql:sparql_query"
+cl_discover = "cogitarelink.simple.cli:discover"
+cl_sparql = "cogitarelink.simple.cli:sparql"
 cl_materialize = "cogitarelink.cli.cl_materialize:materialize"
 cl_wikidata = "cogitarelink.cli.cl_wikidata:wikidata"
 cl_explain = "cogitarelink.cli.explain:main"
 cl_validate = "cogitarelink.cli.validate:main"
 cl_query_memory = "cogitarelink.cli.query_memory:main"
 cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
-cl_ontfetch = "cogitarelink.cli.cl_ontfetch:ontfetch"
+cl_ontfetch = "cogitarelink.simple.cli:ontfetch"
 cl_describe = "cogitarelink.cli.cl_describe:describe"
 cl_follow = "cogitarelink.cli.cl_follow:follow"
 cl_property = "cogitarelink.cli.cl_property:property"
 cl_orchestrate = "cogitarelink.cli.orchestrate:main"
-cl_entity = "cogitarelink.cli.cl_entity:entity"
+cl_entity = "cogitarelink.simple.cli:entity"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

@@ -1,0 +1,292 @@
+[
+  {
+    "command": "cl_discover insulin",
+    "output": {
+      "success": true,
+      "data": {
+        "resource_identifier": "insulin",
+        "resource_type": "identifier",
+        "domain_context": [
+          "general"
+        ],
+        "discovery_method": "pattern_matching",
+        "confidence_score": 0.5
+      },
+      "suggestions": [
+        "cl_entity \"insulin\""
+      ]
+    },
+    "elapsed_time": 0.40372800827026367,
+    "memory_delta": 0.046875,
+    "stdout_size": 283,
+    "success": true
+  },
+  {
+    "command": "cl_discover Q7240673",
+    "output": {
+      "success": true,
+      "data": {
+        "resource_identifier": "Q7240673",
+        "resource_type": "wikidata_entity",
+        "domain_context": [
+          "general"
+        ],
+        "discovery_method": "pattern_matching",
+        "confidence_score": 0.5
+      },
+      "suggestions": [
+        "cl_describe Q7240673",
+        "cl_follow Q7240673"
+      ]
+    },
+    "elapsed_time": 0.10764074325561523,
+    "memory_delta": 0.0,
+    "stdout_size": 314,
+    "success": true
+  },
+  {
+    "command": "cl_discover caffeine",
+    "output": {
+      "success": true,
+      "data": {
+        "resource_identifier": "caffeine",
+        "resource_type": "identifier",
+        "domain_context": [
+          "general"
+        ],
+        "discovery_method": "pattern_matching",
+        "confidence_score": 0.5
+      },
+      "suggestions": [
+        "cl_entity \"caffeine\""
+      ]
+    },
+    "elapsed_time": 0.1029670238494873,
+    "memory_delta": 0.0,
+    "stdout_size": 285,
+    "success": true
+  },
+  {
+    "command": "cl_discover BRCA1",
+    "output": {
+      "success": true,
+      "data": {
+        "resource_identifier": "BRCA1",
+        "resource_type": "identifier",
+        "domain_context": [
+          "general"
+        ],
+        "discovery_method": "pattern_matching",
+        "confidence_score": 0.5
+      },
+      "suggestions": [
+        "cl_entity \"BRCA1\""
+      ]
+    },
+    "elapsed_time": 0.10426092147827148,
+    "memory_delta": 0.0,
+    "stdout_size": 279,
+    "success": true
+  },
+  {
+    "command": "cl_sparql \"SELECT ?protein WHERE { ?protein wdt:P31 wd:Q8054 } LIMIT 5\"",
+    "error": "Usage: cl_sparql [OPTIONS] QUERY\nTry 'cl_sparql --help' for help.\n\nError: Got unexpected extra arguments (?protein WHERE { ?protein wdt:P31 wd:Q8054 } LIMIT 5\")\n",
+    "returncode": 2,
+    "success": false
+  },
+  {
+    "command": "cl_sparql \"SELECT ?item ?uniprot WHERE { ?item wdt:P352 ?uniprot } LIMIT 5\"",
+    "error": "Usage: cl_sparql [OPTIONS] QUERY\nTry 'cl_sparql --help' for help.\n\nError: Got unexpected extra arguments (?item ?uniprot WHERE { ?item wdt:P352 ?uniprot } LIMIT 5\")\n",
+    "returncode": 2,
+    "success": false
+  },
+  {
+    "command": "cl_resolve P352 P01308",
+    "output": {
+      "success": true,
+      "data": {
+        "property_id": "P352",
+        "identifier": "P01308",
+        "property_metadata": {
+          "property_id": "P352",
+          "name": "UniProt protein ID",
+          "description": "identifier for a protein per the UniProt database",
+          "datatype": "external-id",
+          "example_value": {
+            "entity-type": "item",
+            "numeric-id": 13561329,
+            "id": "Q13561329"
+          },
+          "formatter_url": "https://www.uniprot.org/uniprot/$1",
+          "regex_pattern": "([OPQ][0-9][A-Z0-9]|[A-NR-Z][0-9][A-Z])[A-Z0-9][A-Z0-9][0-9]([A-Z][A-Z0-9][A-Z0-9][0-9])?",
+          "sparql_endpoint": null,
+          "domain": "proteins"
+        },
+        "wikidata_results": {
+          "found_entities": [
+            {
+              "id": "Q7240673",
+              "label": "preproinsulin",
+              "instance_of": "http://www.wikidata.org/entity/Q8054",
+              "instance_of_label": "protein"
+            },
+            {
+              "id": "Q7240673",
+              "label": "preproinsulin",
+              "instance_of": "http://www.wikidata.org/entity/Q258658",
+              "instance_of_label": "protein precursor"
+            }
+          ],
+          "total_count": 2,
+          "query_used": "\n            SELECT ?entity ?entityLabel ?instanceOf ?instanceOfLabel WHERE {\n                ?entity wdt:P352 \"P01308\" .\n                OPTIONAL { ?entity wdt:P31 ?instanceOf }\n                SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" }\n            }\n            LIMIT 50\n            "
+        },
+        "cross_references": {
+          "agentic_workflow": [
+            "Use cl_wikidata entity Q7240673 to see all external identifiers",
+            "Use cl_describe wd:Q7240673 to get complete entity details",
+            "Look for P638 (PDB), P683 (ChEBI), P486 (MeSH) and other external IDs",
+            "Use cl_resolve with those property IDs to follow the crosswalk chain"
+          ],
+          "crosswalk_pattern": "Found preproinsulin (Q7240673) - now explore its external identifiers",
+          "expected_databases": [
+            "P638 (PDB) - Protein structures",
+            "P683 (ChEBI) - Chemical compounds",
+            "P486 (MeSH) - Medical terms",
+            "P4333 (GenBank) - Genetic sequences",
+            "P699 (Disease Ontology) - Disease classifications"
+          ],
+          "workflow_example": [
+            "1. cl_wikidata entity Q7240673  # See all properties",
+            "2. cl_resolve P638 <pdb_id>       # Follow PDB structure links",
+            "3. cl_resolve P683 <chebi_id>     # Follow chemical compound links",
+            "4. Continue crosswalk chain across databases"
+          ]
+        },
+        "external_ontology": {},
+        "external_results": {},
+        "validation": {
+          "valid": true,
+          "pattern": "([OPQ][0-9][A-Z0-9]|[A-NR-Z][0-9][A-Z])[A-Z0-9][A-Z0-9][0-9]([A-Z][A-Z0-9][A-Z0-9][0-9])?",
+          "note": "Identifier matches expected format"
+        }
+      },
+      "metadata": {
+        "execution_time_ms": 519,
+        "crosswalk_strategy": "wikidata_external_identifiers",
+        "ontology_discovery": false,
+        "cross_references_found": 0,
+        "external_resolution": false
+      },
+      "suggestions": {
+        "next_tools": [
+          "cl_wikidata entity Q7240673",
+          "cl_describe wd:Q7240673"
+        ],
+        "research_patterns": [
+          "\ud83e\uddec PROTEIN CROSSWALK: Wikidata \u2192 UniProt \u2192 PDB \u2192 Reactome \u2192 PathBank",
+          "\ud83d\udd17 AGENTIC WORKFLOW: Use cl_wikidata to see all external IDs, then cl_resolve each",
+          "\ud83d\udcca INTEGRATION: Combine sequence, structure, pathway, and disease data"
+        ],
+        "crosswalk_opportunities": [
+          "\u2705 Found preproinsulin (Q7240673) - now explore its external identifiers",
+          "\ud83d\udd17 Expected external IDs to look for in preproinsulin:",
+          "P638 (PDB) - Protein structures",
+          "P683 (ChEBI) - Chemical compounds",
+          "P486 (MeSH) - Medical terms",
+          "P4333 (GenBank) - Genetic sequences",
+          "P699 (Disease Ontology) - Disease classifications"
+        ],
+        "workflow_steps": [
+          "Use cl_wikidata entity Q7240673 to see all external identifiers",
+          "Use cl_describe wd:Q7240673 to get complete entity details",
+          "Look for P638 (PDB), P683 (ChEBI), P486 (MeSH) and other external IDs",
+          "Use cl_resolve with those property IDs to follow the crosswalk chain"
+        ]
+      }
+    },
+    "elapsed_time": 0.775993824005127,
+    "memory_delta": 0.0,
+    "stdout_size": 4218,
+    "success": true
+  },
+  {
+    "command": "cl_resolve P683 CHEBI:15365",
+    "output": {
+      "success": false,
+      "error": {
+        "code": "INVALID_IDENTIFIER_FORMAT",
+        "message": "Identifier 'CHEBI:15365' invalid for property P683",
+        "validation_details": {
+          "valid": false,
+          "pattern": "\\d+",
+          "example": {
+            "entity-type": "item",
+            "numeric-id": 407217,
+            "id": "Q407217"
+          },
+          "note": "Identifier does not match pattern: \\d+"
+        },
+        "suggestions": [
+          "Check ChEBI ID format requirements",
+          "Example valid format: {'entity-type': 'item', 'numeric-id': 407217, 'id': 'Q407217'}",
+          "Use --no-validate to skip format checking"
+        ]
+      }
+    },
+    "elapsed_time": 0.28552913665771484,
+    "memory_delta": 0.0,
+    "stdout_size": 617,
+    "success": true
+  },
+  {
+    "command": "cl_discover insulin",
+    "output": {
+      "success": true,
+      "data": {
+        "resource_identifier": "insulin",
+        "resource_type": "identifier",
+        "domain_context": [
+          "general"
+        ],
+        "discovery_method": "pattern_matching",
+        "confidence_score": 0.5
+      },
+      "suggestions": [
+        "cl_entity \"insulin\""
+      ]
+    },
+    "elapsed_time": 0.10756802558898926,
+    "memory_delta": 0.0,
+    "stdout_size": 283,
+    "success": true
+  },
+  {
+    "command": "cl_resolve P352 insulin",
+    "output": {
+      "success": false,
+      "error": {
+        "code": "INVALID_IDENTIFIER_FORMAT",
+        "message": "Identifier 'insulin' invalid for property P352",
+        "validation_details": {
+          "valid": false,
+          "pattern": "([OPQ][0-9][A-Z0-9]|[A-NR-Z][0-9][A-Z])[A-Z0-9][A-Z0-9][0-9]([A-Z][A-Z0-9][A-Z0-9][0-9])?",
+          "example": {
+            "entity-type": "item",
+            "numeric-id": 13561329,
+            "id": "Q13561329"
+          },
+          "note": "Identifier does not match pattern: ([OPQ][0-9][A-Z0-9]|[A-NR-Z][0-9][A-Z])[A-Z0-9][A-Z0-9][0-9]([A-Z][A-Z0-9][A-Z0-9][0-9])?"
+        },
+        "suggestions": [
+          "Check UniProt protein ID format requirements",
+          "Example valid format: {'entity-type': 'item', 'numeric-id': 13561329, 'id': 'Q13561329'}",
+          "Use --no-validate to skip format checking"
+        ]
+      }
+    },
+    "elapsed_time": 0.2633798122406006,
+    "memory_delta": 0.0,
+    "stdout_size": 801,
+    "success": true
+  }
+]
