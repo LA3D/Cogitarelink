@@ -1,34 +1,20 @@
 """
 CogitareLink: Living Scientific Assistant
 
-A semantic web-powered scientific research assistant that combines rigorous knowledge 
-management with intelligent discovery and continuous learning from agent interactions.
+A semantic web-powered scientific research assistant following Claude Code patterns 
+with discovery-first guardrails and multi-agent coordination capabilities.
 
 ## Core Philosophy
-- Hybrid CLI + Agentic: CLI-first composable tools with rich structured responses for agent intelligence
-- Semantic Memory: All discovered knowledge stored as immutable entities with full provenance tracking
-- Discovery-First Guardrails: Never query without schema understanding (like Read-before-Edit in Claude Code)
-- In-Context Teaching: Continuously learn and improve from actual agent usage patterns
-- Software 2.0: Generalized tools + intelligent prompting rather than hardcoded logic
-- Verifiable Science: Every conclusion traceable to sources with cryptographic verification
-- Framework Agnostic: Works with Claude Code, DSPy, LangGraph, or any agent framework
+- Simple Tools: Each tool does ONE thing well (like Claude Code)
+- Fast Execution: Sub-second response times  
+- Discovery First: Cache schemas, discover before query
+- Prompt Intelligence: Move complexity to prompts, not code
+- Multi-Agent Ready: Tools compose for agent workflows
 """
 
 __version__ = "0.1.0"
 
-# Core modules
-from . import core, vocab, reason
+# Core modules only - minimal clean architecture
+from . import core, discovery, cli
 
-# Intelligence and memory
-from . import intelligence, memory
-
-# Verification and teaching
-from . import verify, teaching
-
-# CLI and adapters
-from . import cli, adapters
-
-__all__ = [
-    "core", "vocab", "reason", "intelligence", "memory", 
-    "verify", "teaching", "cli", "adapters"
-]
+__all__ = ["core", "discovery", "cli"]

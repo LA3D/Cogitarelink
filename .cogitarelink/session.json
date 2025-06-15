@@ -1,0 +1,29 @@
+{
+  "sessionId": "cl_research_20250615_154342_0f7c160d",
+  "claudeSessionId": null,
+  "originalCwd": "/Users/cvardema/dev/git/LA3D/cl/Cogitarelink",
+  "cwd": "/Users/cvardema/dev/git/LA3D/cl/Cogitarelink",
+  "researchDomain": "cultural",
+  "researchGoal": "Test service-first discovery capabilities",
+  "createdAt": "2025-06-15T19:43:42.460632+00:00",
+  "lastInteractionTime": 1750016622.460739,
+  "sessionCounter": 1,
+  "toolUsage": {
+    "cl_discover": 0,
+    "cl_search": 0,
+    "cl_fetch": 0,
+    "cl_query": 0,
+    "cl_resolve": 0
+  },
+  "discoveredEndpoints": [],
+  "activeInstructions": [
+    "discovery_first",
+    "cache_aware_workflow",
+    "cultural_workflow"
+  ],
+  "researchProgress": {
+    "entitiesDiscovered": 0,
+    "relationshipsFound": 0,
+    "workflowsCompleted": 0
+  }
+}

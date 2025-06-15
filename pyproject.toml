@@ -41,16 +41,15 @@ dev = [
 ]
 
 [project.scripts]
+# Clean minimal CLI tools following Claude Code patterns
+cl_search = "cogitarelink.cli.cl_search:search"
+cl_fetch = "cogitarelink.cli.cl_fetch:fetch"
 cl_discover = "cogitarelink.cli.cl_discover:discover"
-cl_sparql = "cogitarelink.cli.cl_sparql:sparql_query"
-cl_materialize = "cogitarelink.cli.cl_materialize:materialize"
-cl_wikidata = "cogitarelink.cli.cl_wikidata:wikidata"
-cl_explain = "cogitarelink.cli.explain:main"
-cl_validate = "cogitarelink.cli.validate:main"
-cl_query_memory = "cogitarelink.cli.query_memory:main"
+cl_query = "cogitarelink.cli.cl_query:query"
 cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
-cl_ontfetch = "cogitarelink.cli.cl_ontfetch:ontfetch"
-cl_orchestrate = "cogitarelink.cli.orchestrate:main"
+
+# Research agent entry point for Claude Code integration
+cogitarelink = "cogitarelink.cli.cogitarelink:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -64,11 +63,8 @@ exclude = ["tests*", "llmstxt*", "docs*", "scripts*"]
 minversion = "8.0"
 addopts = [
     "-ra",
-    "--strict-markers",
+    "--strict-markers", 
     "--strict-config",
-    "--cov=cogitarelink",
-    "--cov-report=html",
-    "--cov-report=term-missing",
 ]
 testpaths = ["tests"]
 markers = [
@@ -148,4 +144,10 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-asyncio>=1.0.0",
 ]

@@ -21,174 +21,496 @@ A semantic web-powered scientific research assistant that combines rigorous know
 - **Verifiable Science**: Every conclusion traceable to sources with cryptographic verification
 - **Framework Agnostic**: Works with Claude Code, DSPy, LangGraph, or any agent framework
 
-## Architecture Overview
+## Research Agent Integration with Claude Code
 
-```
-cogitarelink/
-├── core/                           # Semantic memory micro-kernel (~1500 LOC)
-│   ├── entity.py                  # Immutable JSON-LD entities with SHA-256 signatures
-│   ├── graph.py                   # Multi-backend RDF storage with named graphs
-│   ├── context.py                 # Full JSON-LD 1.1 processor
-│   ├── cache.py                   # Multi-layer caching (memory LRU + disk + TTL)
-│   └── processor.py               # Entity processing pipeline with normalization
-│
-├── vocab/                          # Advanced vocabulary management
-│   ├── registry.py                # Dynamic vocab registry with versioning
-│   ├── composer.py                # Context composition with JSON-LD 1.1 features
-│   └── collision.py               # Multi-strategy conflict resolution
-│
-├── reason/                         # SHACL-unified reasoning engine
-│   ├── shacl_engine.py           # Universal SHACL SPARQL rules
-│   ├── prov.py                    # W3C PROV-O provenance wrapper
-│   └── obqc.py                    # Ontology-based query checking
-│
-├── intelligence/                   # Agent intelligence layer
-│   ├── discovery_engine.py       # Multi-method endpoint discovery
-│   ├── complexity_analyzer.py    # Query complexity analysis
-│   ├── guidance_generator.py     # Domain-specific CoT patterns
-│   └── universal_resolver.py     # Self-configuring identifier resolution
-│
-├── memory/                         # Semantic memory with introspection
-│   ├── semantic_cache.py          # Queryable semantic memory
-│   └── state_manager.py          # Discovery state tracking
-│
-├── cli/                            # CLI tools with structured intelligence
-│   ├── discover.py                # cl_discover - Scientific resource discovery
-│   ├── sparql.py                  # cl_sparql - Guardrail-protected queries
-│   ├── materialize.py             # cl_materialize - Knowledge materialization
-│   └── explain.py                 # cl_explain - Reasoning chain explanation
-│
-└── adapters/                       # Framework-agnostic integration
-    ├── claude_code.py             # Claude Code tool registration
-    └── universal_cli.py           # Direct CLI access
+### Architecture Overview
+CogitareLink enhances Claude Code through **instruction-driven enhancement** rather than architectural modification. The core insight: transform Claude Code into a research assistant by providing enhanced instructions and maintaining parallel session state.
+
+### Parallel Session Design
+- **Claude Code Session**: `.claude/session.json` (untouched - cost tracking, model usage)
+- **Research Session**: `.cogitarelink/session.json` (research context, domain knowledge, instruction state)
+- **Session Linking**: Research sessions reference Claude Code sessions for correlation
+- **Independent Persistence**: Both systems persist separately using debounced patterns
+
+### Entry Point: `cogitarelink` Command
+```bash
+cogitarelink init biology                    # Initialize research mode
+cogitarelink status                         # Show research session state  
+cogitarelink remind discovery               # Print discovery-first instructions
+cogitarelink remind protein-workflow        # Print protein research patterns
+cogitarelink resume cl_research_20240615    # Resume previous research session
 ```
 
-## Development Approach - Fast.ai Style Implementation
+**Key Behavior**: Prints research instructions directly to Claude Code's context, enabling enhanced research capabilities without architectural changes.
 
-### Philosophy: Jeremy Howard's Incremental, Tested Development
+## CLI Tool Refactoring Plan (Jeremy Howard Style)
 
-Following Jeremy Howard's fast.ai approach for building AI-friendly tools with immediate feedback loops:
+### Overview
+Refactoring completed ✅ - 5 CLI tools built following Claude Code patterns with discovery-first guardrails and session-aware caching.
 
-#### 1. **Step-by-Step Foundation Building**
-- Start with the simplest possible working component
-- Build each layer on proven foundations
-- Test immediately at every step
-- Refactor when patterns emerge
+Built clean foundation using proper libraries (diskcache, SPARQLWrapper, rdflib, pyld) instead of custom implementations.
 
-#### 2. **Test-as-You-Go Development**
-```python
-# Every function includes immediate testing
-def normalize_entity(entity: Entity) -> str:
-    """URDNA2015 normalization with immediate validation"""
-    result = _proc.normalize(entity.as_json)
-    # Immediate test
-    assert len(result) > 0, "Normalization failed"
-    return result
-```
+### Phase 2: CLI Tools - COMPLETED ✅
+Created 5 production-ready CLI tools:
+- **cl_search**: Entity search (Wikidata API + SPARQL endpoints)
+- **cl_fetch**: Entity data retrieval with structured output
+- **cl_discover**: Endpoint capability discovery with caching
+- **cl_query**: SPARQL execution with discovery-first guardrails
+- **cl_resolve**: Cross-reference resolution across databases
 
-#### 3. **Incremental Tool Development Order**
-1. **Core Infrastructure** - Entity, Graph, Context (foundation)
-2. **Simple Tools** - Basic discovery and validation
-3. **Agent Intelligence** - Structured responses and CoT patterns
-4. **Complex Workflows** - Multi-step research orchestration
+All tools follow Claude Code patterns: simple parameters, fast execution, structured responses.
 
-#### 4. **Agent-Friendly Design from Start**
-- Structured JSON responses with metadata and suggestions
-- Helpful error messages with recovery strategies
-- Rich context for follow-up actions
-- Comprehensive input validation
+### Phase 3: Research Agent Entry Point - IN PROGRESS 🚧
 
-### Development Structure
-
-```
-tests/
-├── test_core.py           # Foundation tests - run first
-├── test_vocab.py          # Vocabulary management tests
-├── test_intelligence.py   # Agent intelligence tests
-└── test_workflows.py      # End-to-end workflow tests
-```
-
-### Key Development Principles
-
-1. **Foundation First**: Solid core components make everything else easier
-2. **Test Immediately**: Catch issues early, build confidence at each step
-3. **Incremental Complexity**: Simple → useful → powerful
-4. **Agent Patterns**: Claude Code analysis guides design decisions
-5. **Real Workflow Testing**: End-to-end tests confirm integration
-
-## Agent-Friendly Tool Design Patterns
-
-Based on analysis of Claude Code's tool architecture, CogitareLink implements patterns that make tools effective for AI agents:
-
-### 1. **Structured Response Architecture**
-
-All CLI tools return rich JSON responses with agent guidance:
-
+#### Research Session Architecture
 ```json
+// .cogitarelink/session.json structure
+{
+  "sessionId": "cl_research_20240615_123456",
+  "claudeSessionId": "abc123-def456-ghi789", 
+  "researchDomain": "biology",
+  "researchGoal": "COVID spike protein analysis",
+  "discoveredEndpoints": [...],
+  "activeInstructions": ["discovery_first_biology", "protein_workflow"],
+  "researchProgress": {...}
+}
+```
+
+#### Instruction Index System
+```
+cogitarelink/instructions/
+├── discovery_first.md      # Discovery-before-query patterns  
+├── biology_workflow.md     # Protein research workflows
+├── chemistry_workflow.md   # Chemical compound analysis
+└── multi_agent.md         # Agent coordination patterns
+```
+
+#### Entry Point Commands
+- `cogitarelink init <domain>` - Initialize research session
+- `cogitarelink status` - Show current research context
+- `cogitarelink remind <pattern>` - Print specific instructions
+- `cogitarelink resume <session_id>` - Resume previous session
+
+### Phase 4: Enhanced Tool Intelligence - IN PROGRESS 🚧
+
+**Software 2.0 Architecture Strategy**: Build domain-agnostic tools with rich metadata that future sub-agents can interpret intelligently.
+
+#### Core Design Principle
+**Tools should be data-rich and suggestion-smart, but domain-dumb.** Domain reasoning will eventually be handled by specialized sub-agents, not hardcoded logic.
+
+### Cache-Aware Dynamic Discovery Architecture ✨
+
+**Revolutionary Insight**: CogitareLink tools should follow Claude Code's caching patterns - cache-aware but capability-backed, self-improving through usage.
+
+#### The Claude Code Pattern Applied to Discovery
+```python
+def classify_domain_from_service(service_id: str) -> str:
+    # 1. Check cache first (fast path)
+    cache_key = f"service_domain:{service_id}"
+    cached = cache_manager.get(cache_key)
+    if cached:
+        return cached
+    
+    # 2. Fallback to live discovery capability
+    domain = self._discover_domain_via_sparql(service_id)
+    
+    # 3. Cache the result for future use
+    cache_manager.set(cache_key, domain, ttl=86400)
+    
+    return domain
+```
+
+#### Multi-Layer Cache Strategy
+- **Layer 1**: Property → Service mapping (`P352 → Q905695`, 24h TTL)
+- **Layer 2**: Service → Domain mapping (`Q905695 → "biology"`, 24h TTL)  
+- **Layer 3**: Domain → Workflow patterns (`"biology" → ["P31→P352→P638"]`, 1 week TTL)
+- **Layer 4**: Identifier → Resolution results (`"P04637" → [results]`, 1h TTL)
+
+#### Self-Improving Tool Design
+Each tool usage teaches the system more about semantic web structure:
+- **Discovery**: SPARQL queries discover service domains automatically
+- **Caching**: Discoveries cached for fast subsequent access
+- **Fallback**: Always falls back to live discovery when cache misses
+- **Learning**: System improves performance through actual usage patterns
+
+#### Implementation Requirements
+
+### Dynamic Discovery Implementation Plan
+
+#### 1. Core Discovery Functions (cl_resolve)
+```python
+# IMPLEMENT: Cache-aware domain discovery
+def discover_service_for_property(prop_id: str) -> str:
+    """P352 → Q905695 via cached/live SPARQL"""
+
+def classify_domain_from_service(service_id: str) -> str:
+    """Q905695 → "biology" via cached/live SPARQL query to P921 (main subject)"""
+
+def discover_database_pattern(prop_id: str) -> Dict[str, Any]:
+    """P352 → {name, domain, format, url} via cached/live discovery"""
+
+def resolve_identifier_dynamic(identifier: str) -> List[Dict]:
+    """P04637 → auto-detect → discover patterns → resolve"""
+```
+
+#### 2. Cache Manager Integration
+```python
+# USE EXISTING: cogitarelink.discovery.cache_manager
+cache_manager.get(cache_key)
+cache_manager.set(cache_key, result, ttl=86400)
+
+# CACHE KEYS STRATEGY:
+# "service_discovery:P352" → "Q905695"
+# "service_domain:Q905695" → "biology"  
+# "database_pattern:P352" → {complete pattern dict}
+# "identifier_resolution:P04637" → [resolution results]
+```
+
+#### 3. Enhanced Prompting Integration
+Update `cogitarelink.py` instruction templates to include:
+- **Cache-aware workflow patterns**: "First time: discovery + cache, subsequent: fast cache lookup"
+- **Domain intelligence prompts**: Generated from discovered service → domain mappings
+- **Cross-reference workflow suggestions**: Based on cached external identifier patterns
+- **Self-improving guidance**: "System learns from your usage patterns"
+
+#### 4. Tool Response Enhancement
+```python
+# IMPLEMENT: Claude Code structured responses
 {
     "success": true,
     "data": {...},
     "metadata": {
-        "execution_time_ms": 1250,
-        "materialized_triples": 156,
-        "complexity_score": 3.2
+        "cache_hit": true,
+        "discovery_method": "cached_pattern",
+        "execution_time_ms": 15
     },
     "suggestions": {
         "next_tools": ["cl_sparql --endpoint discovered"],
-        "reasoning_patterns": ["🧬 PROTEIN → PATHWAY → DISEASE"],
-        "workflow_steps": ["1. Extract cross-references", "2. Follow to databases"]
+        "workflow_patterns": ["biology: P352→P638→P705"],
+        "cache_status": "pattern_learned"
     },
     "claude_guidance": {
-        "domain_context": ["Biological research patterns discovered"],
-        "optimization_hints": ["Query complexity acceptable"],
-        "potential_issues": ["Check temporal coverage"]
+        "domain_intelligence": ["UniProt focuses on protein sequences"],
+        "learned_patterns": ["System cached biology workflow for Q905695"],
+        "discovery_insights": ["Found 3 external identifier patterns"]
     }
 }
 ```
 
-### 2. **Discovery-First Guardrails**
-
-Like Claude Code's "Read-before-Edit" pattern, CogitareLink enforces "Discover-before-Query":
-
+#### 5. Session-Aware Learning
 ```python
-# SPARQL queries require prior schema discovery
-if not state_manager.is_discovered(endpoint):
-    return {
-        "success": False,
-        "error": {
-            "code": "DISCOVERY_REQUIRED",
-            "required_action": f"cl_discover --endpoint {endpoint}",
-            "reasoning": "Schema discovery prevents vocabulary errors"
-        }
-    }
+# ENHANCE: Research session tracks discoveries
+session_data["learned_patterns"] = [
+    {"service": "Q905695", "domain": "biology", "learned_at": timestamp},
+    {"property": "P352", "pattern": {...}, "learned_at": timestamp}
+]
+
+# IMPLEMENT: Session-specific cache warming
+def warm_session_cache(domain: str):
+    """Pre-populate cache with domain-specific patterns"""
 ```
 
-### 3. **Chain-of-Thought (CoT) Reasoning Scaffolds**
-
-Tools provide reasoning context rather than hardcoded solutions:
-
+#### 6. Live Testing & Validation
 ```python
-# Instead of hardcoded drug_discovery() tool:
-guidance = {
-    "reasoning_patterns": [
-        "Disease → Associated Pathways → Pathway Proteins → Drug Targets",
-        "Protein Structure → Binding Sites → Compound Libraries → Candidates"
-    ],
-    "biological_workflow": [
-        "1. Identify disease pathways using SPARQL",
-        "2. Extract pathway proteins via cross-references", 
-        "3. Analyze protein structures in UniProt",
-        "4. Search compound databases for binding candidates"
-    ]
+# TESTS TO IMPLEMENT:
+class TestCacheAwareDiscovery:
+    def test_p352_to_uniprot_cached(self):
+        """First call: discovery + cache, second call: cache hit"""
+        
+    def test_dynamic_domain_classification(self):
+        """Q905695 → "biology" via live SPARQL → cached"""
+        
+    def test_self_improving_workflows(self):
+        """Usage patterns improve subsequent recommendations"""
+```
+
+### Enhanced Prompting Integration Requirements
+
+#### Update Instruction Templates (cogitarelink.py)
+
+**1. Discovery-First Template Enhancement:**
+```markdown
+🔍 **CACHE-AWARE DISCOVERY PATTERN**
+
+**First Usage (Discovery + Learning):**
+- Use `cl_resolve <identifier>` → System discovers and caches patterns
+- Execution time: ~500ms (includes SPARQL discovery)
+- Cache warm-up: Service domains, format patterns, workflow suggestions
+
+**Subsequent Usage (Fast Cache Access):**  
+- Use `cl_resolve <identifier>` → System uses cached patterns
+- Execution time: ~50ms (cache hit)
+- Intelligent suggestions based on learned domain patterns
+
+**System Learning Indicators:**
+- ✅ "Pattern cached for Q905695 → biology domain"
+- ✅ "Discovered workflow: P352→P638→P705"
+- ✅ "Next resolution will be 10x faster"
+```
+
+**2. Dynamic Domain Intelligence:**
+```markdown
+📊 **DYNAMIC DOMAIN INTELLIGENCE**
+
+**Biology Domain (Automatically Discovered):**
+- UniProt (Q905695): Main subject → Biology (Q420)
+- Workflow patterns: P352→P638→P705 (protein→structure→genomics)
+- Cache status: ✅ Learned from previous usage
+
+**Chemistry Domain (Automatically Discovered):**
+- PubChem (Q278487): Main subject → Chemistry (Q2329)  
+- Workflow patterns: P231→P662→P592 (identity→structure→bioactivity)
+- Cache status: ✅ Learned from previous usage
+
+**System continuously learns new domains as you discover them.**
+```
+
+**3. Self-Improving Workflow Guidance:**
+```markdown
+🚀 **SELF-IMPROVING RESEARCH WORKFLOWS**
+
+The system learns from your usage patterns:
+
+**Session Learning:**
+- Tracks discovered domains and patterns per session
+- Builds personalized workflow recommendations
+- Warms cache for your research domain
+
+**Cross-Session Learning:**
+- Remembers successful discovery patterns
+- Improves suggestion quality over time
+- Reduces discovery overhead through intelligent caching
+
+**Usage Examples:**
+```bash
+# First time: System learns about biology
+cl_resolve P04637  # Discovers: P352→Q905695→biology, caches pattern
+
+# Second time: Fast cached access + intelligent suggestions  
+cl_resolve Q9UHC7  # Uses cached biology patterns, suggests P638 (PDB)
+```
+
+#### Session Enhancement Requirements
+
+**1. Cache Warmup Integration:**
+```python
+# IMPLEMENT: Domain-specific cache warming
+def init_biology_session():
+    """Pre-populate cache with biology patterns for fast research"""
+    warm_patterns = ["P352", "P638", "P705", "P594", "P637"]
+    for prop_id in warm_patterns:
+        discover_database_pattern(prop_id)  # Cache for fast access
+```
+
+**2. Learning Metrics Tracking:**
+```json
+// ADD TO: session.json
+"cache_learning": {
+    "patterns_discovered": 15,
+    "domains_learned": ["biology", "chemistry"],
+    "avg_resolution_time_ms": 45,  // Improved from 500ms via caching
+    "cache_hit_rate": 0.85
 }
 ```
 
-### 4. **Software 2.0: Generalized Tools + Intelligent Prompting**
+#### Target Architecture
+│ • cl_search     │────│ • Context        │────│ • Biology Agent     │
+│ • cl_fetch      │    │ • Progress       │    │ • Chemistry Agent   │
+│ • cl_discover   │    │ • Tool Usage     │    │ • Literature Agent  │
+│ • cl_query      │    │ • Metadata       │    │ • Analysis Agent    │
+│ • cl_resolve    │    │                  │    │                     │
+└─────────────────┘    └──────────────────┘    └─────────────────────┘
+```
 
-Following Claude Code's success pattern:
-- **Few, powerful tools** that compose infinitely (like ripgrep)
-- **Rich prompting context** that enables agent reasoning
-- **Domain expertise** encoded as reasoning scaffolds, not hardcoded logic
+#### Enhanced Tool Response Pattern
+```json
+{
+  "data": {...},
+  "metadata": {
+    "entity_types": ["Q8054", "Q11173"],
+    "external_references": {"P352": 5, "P594": 2},
+    "relationship_graph": {...},
+    "execution_context": {
+      "cache_hit": true,
+      "execution_time_ms": 250,
+      "complexity_score": 3.2
+    }
+  },
+  "composition_opportunities": {
+    "detail_retrieval": ["cl_fetch Q123", "cl_fetch Q456"],
+    "cross_reference_following": ["cl_resolve P04637"],
+    "search_expansion": ["cl_search 'broader_term'"],
+    "endpoint_exploration": ["cl_discover uniprot"]
+  },
+  "session_context": {
+    "research_domain": "biology",
+    "entities_discovered": 15,
+    "successful_patterns": ["search→fetch→resolve"]
+  }
+}
+```
+
+#### Software 2.0 vs Software 1.0 Guidelines
+
+**❌ Avoid (Software 1.0 - Hardcoded Logic):**
+```python
+# BAD: Domain-specific hardcoded logic
+if domain == "biology":
+    if "protein" in results:
+        suggestions = ["Follow protein pathways", "Check UniProt"]
+elif domain == "chemistry":  
+    if "compound" in results:
+        suggestions = ["Check PubChem", "Find targets"]
+```
+
+**✅ Prefer (Software 2.0 - General + Rich Metadata):**
+```python
+# GOOD: General patterns + contextual metadata
+suggestions = {
+    "entity_expansion": [f"cl_fetch {entity['id']}" for entity in top_results],
+    "cross_references": self._extract_external_ids(results),
+    "relationship_exploration": self._extract_relationships(results),
+    "endpoint_bridging": self._suggest_related_endpoints(entity_types)
+}
+```
+
+**Key Principle**: Tools provide comprehensive, structured metadata. Domain intelligence comes from:
+1. **Enhanced instruction templates** that teach agents how to interpret metadata
+2. **Research session context** that focuses the interpretation  
+3. **Future sub-agents** that specialize in domain reasoning
+
+#### Implementation Phases
+**Phase 4a**: Enhance tool responses with rich metadata and composition patterns
+**Phase 4b**: Add session-aware context and research progress tracking  
+**Phase 4c**: Create instruction templates that prepare for sub-agent architecture
+
+### Future Phases (Multi-Agent Integration)
+**Phase 5**: Extract domain reasoning into specialized sub-agents using claude-code SDK
+**Phase 6**: Sub-agent coordination and workflow orchestration
+**Phase 7**: Advanced research workflows with cross-domain intelligence
+
+## Session Management Design
+
+### .cogitarelink/session.json Structure
+```json
+{
+  "sessionId": "cl_research_20240615_123456",
+  "claudeSessionId": "abc123-def456-ghi789",
+  "originalCwd": "/Users/username/project",
+  "cwd": "/Users/username/project",
+  "researchDomain": "biology",
+  "researchGoal": "COVID spike protein analysis",
+  "lastInteractionTime": 1703123456789,
+  "sessionCounter": 1,
+  "toolUsage": {
+    "cl_discover": 3,
+    "cl_search": 8,
+    "cl_fetch": 5,
+    "cl_query": 12,
+    "cl_resolve": 2
+  },
+  "discoveredEndpoints": [
+    {
+      "name": "wikidata",
+      "url": "https://query.wikidata.org/sparql", 
+      "discoveredAt": 1703123456789,
+      "capabilities": {...}
+    }
+  ],
+  "activeInstructions": [
+    "discovery_first_biology",
+    "protein_research_workflow"
+  ],
+  "researchProgress": {
+    "entitiesDiscovered": 23,
+    "relationshipsFound": 8,
+    "workflowsCompleted": 2
+  }
+}
+```
+
+## Updated pyproject.toml CLI Scripts
+```toml
+[project.scripts]
+# Existing 5 CLI tools (COMPLETED ✅)
+cl_search = "cogitarelink.cli.cl_search:search"
+cl_fetch = "cogitarelink.cli.cl_fetch:fetch"  
+cl_discover = "cogitarelink.cli.cl_discover:discover"
+cl_query = "cogitarelink.cli.cl_query:query"
+cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
+
+# Research agent entry point (IN PROGRESS 🚧)
+cogitarelink = "cogitarelink.cli.cogitarelink:main"
+```
+
+**Step 3.2: Create Agent Prompts Module**
+- Create `cogitarelink/prompts/` directory
+- `lead_agent.txt` - Orchestrator prompt
+- `biology_agent.txt` - Biology subagent prompt
+- `chemistry_agent.txt` - Chemistry subagent prompt
+- Move intelligence to prompts, not code
+
+**Step 3.3: Test Multi-Agent Flow**
+- Create `tests/test_multi_agent.py`
+- Mock Claude Code SDK calls
+- Test task decomposition
+- Test result synthesis
+
+### Phase 4: Prompt-Based Intelligence (Week 4)
+**Step 4.1: Extract Guardrails to Prompts**
+- Move discovery requirements to agent prompts
+- Move vocabulary validation to prompts
+- Keep only minimal safety checks in code
+
+**Step 4.2: Create Prompt Templates**
+```
+prompts/
+   discovery_first.txt     # "Always discover before query"
+   progressive_search.txt  # "Start broad, narrow down"
+   cross_reference.txt     # "Follow external IDs"
+   synthesis.txt          # "Combine findings with citations"
+```
+
+**Step 4.3: Simplify Response Format**
+- Remove complex metadata structures
+- Return simple JSON or text
+- Let agents add reasoning via prompts
+
+### Phase 5: Integration and Testing (Week 5)
+**Step 5.1: Update pyproject.toml**
+```toml
+[project.scripts]
+cl_search = "cogitarelink.cli.cl_search:search"
+cl_fetch = "cogitarelink.cli.cl_fetch:fetch"
+cl_discover = "cogitarelink.cli.cl_discover:discover"
+cl_query = "cogitarelink.cli.cl_query:query"
+cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
+cl_research = "cogitarelink.cli.cl_research:research"
+```
+
+**Step 5.2: Create Example Workflows**
+- `examples/simple_search.py` - Basic entity search
+- `examples/cross_reference.py` - Follow external IDs
+- `examples/multi_agent_research.py` - Full research workflow
+
+**Step 5.3: Performance Testing**
+- Ensure tools execute in <100ms (except network calls)
+- Test cache effectiveness
+- Profile multi-agent coordination
+
+### Key Principles Applied:
+1. **Simple Tools**: Each tool does ONE thing well
+2. **Fast Execution**: Sub-second response times
+3. **Discovery First**: Cache schemas, discover before query
+4. **Prompt Intelligence**: Move complexity to prompts
+5. **Claude Code Patterns**: Simple params, clear output
+6. **Multi-Agent Ready**: Tools compose for agent workflows
+
+### Migration Strategy:
+- Keep old tools during transition
+- New tools in `cogitarelink/cli/` directory
+- Gradual migration of functionality
+- Test each phase before proceeding
 
 ## Build/Test Commands
 
@@ -202,366 +524,107 @@ source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 uv pip install -e ".[dev]"
 ```
 
+### Current Test Coverage (✅ Implemented)
+```bash
+# Foundation tests (9/9 passing) ✅
+uv run pytest tests/test_cache_manager.py -v     # Diskcache integration
+uv run pytest tests/test_discovery_base.py -v   # SPARQLWrapper integration
+
+# CLI Tool tests (11/11 passing) ✅
+uv run pytest tests/test_cli_tools.py -v        # All 5 CLI tools tested
+
+# Integration tests (10/10 passing) ✅  
+uv run pytest tests/test_integration.py -v      # Tool composition workflows
+
+# Core test suite (30/30 passing) ✅
+uv run pytest tests/ -k "not error_handling and not output_formats" -v
+
+# All implemented tests
+uv run pytest tests/ -v
+```
+
+### Advanced Test Coverage (📋 Optional)
+```bash
+# Error Handling Tests (MEDIUM - agent robustness)
+tests/test_error_handling.py:
+  - test_network_timeout_handling()
+  - test_invalid_sparql_queries()
+  - test_missing_entities()
+  - test_malformed_endpoints()
+
+# Output Format Tests (MEDIUM - agent parsing)  
+tests/test_output_formats.py:
+  - test_json_output_structure()
+  - test_text_output_formatting()
+  - test_csv_output_formatting()
+  - test_error_output_consistency()
+
+# Performance Tests (LOW - optimization)
+tests/test_performance.py:
+  - test_tool_execution_speed()
+  - test_memory_usage_limits()
+  - test_concurrent_requests()
+```
+
 ### Development Workflow
 ```bash
 # Run all tests with immediate feedback
-pytest -v
+uv run pytest tests/ -v
 
-# Run specific test module
-pytest tests/test_core.py -v
+# Run specific test file
+uv run pytest tests/test_cli_tools.py -v
 
 # Run single test function
-pytest tests/test_entity.py::test_immutable_entity -v
+uv run pytest tests/test_cli_tools.py::test_cl_search_wikidata_api -v
 
 # Format code (Black, 88 columns)
-black cogitarelink/ tests/
+uv run black cogitarelink/ tests/
 
 # Type checking
-mypy cogitarelink/
-
-# CLI tool testing
-cl_discover "SARS-CoV-2 spike protein" --domains biology
-cl_sparql "SELECT ?protein WHERE { ?protein wdt:P31 wd:Q8054 }"
+uv run mypy cogitarelink/
 ```
 
-### Testing Strategy
+### CLI Tool Testing (Manual Verification)
+```bash
+# Test all 5 CLI tools working together
+uv run cl_discover wikidata --capabilities --format text
+uv run cl_search "insulin" --limit 3 --format text  
+uv run cl_fetch Q7240673 --properties labels,descriptions
+uv run cl_query "SELECT ?item WHERE { ?item wdt:P31 wd:Q8054 }" --limit 2 --format text
+uv run cl_resolve P04637 --to-db wikidata --format text
+
+# Test different endpoints
+uv run cl_search "COVID" --endpoint wikipathways --format json
+uv run cl_fetch WP4846_r120585 --endpoint wikipathways --format text
+uv run cl_discover uniprot --schema --format text
+```
+
+### Testing Strategy (Jeremy Howard Style)
 ```python
 # Use fastcore test patterns for immediate feedback
 from fastcore.test import test_eq, test_fail
 
-def test_entity_immutability():
-    """Test that entities are truly immutable"""
-    entity = Entity(vocab=["bioschemas"], content={"name": "insulin"})
-    
-    # Test immutability
-    test_eq(entity.content["name"], "insulin")
-    
-    # Test SHA-256 signature consistency  
-    sig1 = entity.sha256
-    sig2 = entity.sha256
-    test_eq(sig1, sig2)
-    
-    # Test that modification creates new entity
+def test_cl_search_basic():
+    """Test basic search functionality"""
+    result = run_cli_command("cl_search", ["insulin", "--limit", "1"])
+    test_eq(result.returncode, 0)
+    data = json.loads(result.stdout)
+    test_eq(data["count"], 1)
+    test_eq(len(data["results"]), 1)
+
+def test_cl_search_error_handling():
+    """Test search with invalid input"""
     with test_fail():
-        entity.content["name"] = "modified"  # Should fail
+        run_cli_command("cl_search", [""])  # Should fail
 ```
 
-## Code Style Guidelines
-
-### Core Principles
-- **Format**: Black (88 columns) with immediate formatting on save
-- **Types**: Use type hints everywhere with `from __future__ import annotations`
-- **Testing**: Include at least one test per public function using fastcore patterns
-- **Error Handling**: Graceful degradation with structured error responses
-- **Documentation**: Rich docstrings with agent-friendly examples
-
-### Naming Conventions
-```python
-# Files and modules
-cli/discover.py          # cl_discover command
-intelligence/guidance.py # Agent guidance generation
-
-# Functions and variables
-def discover_endpoints():     # Clear, action-oriented
-    endpoint_capabilities = {} # Descriptive variable names
-    
-# Classes
-class EntityProcessor:       # Noun-based, clear purpose
-class DiscoveryEngine:      # Service-oriented naming
-```
-
-### Agent-Friendly Patterns
-```python
-# Rich error responses for agent guidance
-def validate_sparql_query(query: str) -> ValidationResult:
-    """Validate SPARQL with agent-friendly suggestions"""
-    if "LIMIT" not in query.upper():
-        return ValidationResult(
-            valid=False,
-            error="Missing LIMIT clause in SPARQL query",
-            suggestion="Add 'LIMIT 100' to prevent timeout",
-            example="SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100"
-        )
-```
-
-### Import Organization
-```python
-# Standard library imports
-from __future__ import annotations
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-import hashlib, json
-
-# Third-party imports  
-from pydantic import BaseModel, Field
-import click
-
-# Local imports
-from .entity import Entity
-from ..vocab.composer import composer
-```
-
-## Network and Performance Guidelines
-
-### Request Timeouts
-```python
-# Always set reasonable timeouts for network requests
-async def fetch_ontology(url: str) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(url)
-        return response.json()
-```
-
-### Caching Strategy
-```python
-# Multi-layer caching with semantic awareness
-cache_key = f"schema:{hash(endpoint_url)}"
-if cached := semantic_cache.get(cache_key):
-    return cached
-
-# Cache with biological context preservation
-semantic_cache.set(cache_key, schema, ttl=3600)
-```
-
-### Response Size Management
-```python
-# Context-aware truncation for large biological datasets
-def truncate_biological_result(result: dict, max_size=100_000) -> dict:
-    """Preserve essential biological information during truncation"""
-    if estimate_tokens(result) <= max_size:
-        return result
-    
-    # Priority preservation:
-    # 1. Entity IDs and cross-references
-    # 2. Essential biological properties (P31, P352, P703)
-    # 3. Key relationships and reasoning context
-    return truncated_with_biological_awareness(result)
-```
-
-## Knowledge Artifact Layers
-
-CogitareLink follows a structured approach to knowledge representation:
-
-### 1. **Context Layers** (*.context.jsonld)
-```json
-{
-  "@context": {
-    "protein": "https://bioschemas.org/Protein",
-    "hasSequence": "https://bioschemas.org/hasSequence"
-  }
-}
-```
-
-### 2. **Ontology Definitions** (ontology.ttl)
-```turtle
-@prefix bio: <https://bioschemas.org/> .
-@prefix sh: <http://www.w3.org/ns/shacl#> .
-
-bio:Protein a rdfs:Class ;
-    rdfs:label "Protein" ;
-    rdfs:comment "A biological macromolecule" .
-```
-
-### 3. **SHACL Shapes/Rules** (shapes.ttl)
-```turtle
-bio:ProteinShape a sh:NodeShape ;
-    sh:targetClass bio:Protein ;
-    sh:property [
-        sh:path bio:hasSequence ;
-        sh:minCount 1 ;
-        sh:datatype xsd:string
-    ] .
-```
-
-### 4. **Data Instances** (*.jsonld)
-```json
-{
-  "@context": "protein.context.jsonld",
-  "@type": "protein",
-  "identifier": "P04637",
-  "hasSequence": "MEEPQSDPSVEPPLS..."
-}
-```
-
-## CLI Tools with Structured Intelligence
-
-### Tool Response Pattern
-All CLI tools follow a consistent pattern for agent intelligence:
-
-```python
-@click.command()
-@click.argument('query')
-@click.option('--domains', multiple=True)
-def discover(query: str, domains: List[str]):
-    """Scientific resource discovery with auto-materialization"""
-    
-    # Core discovery logic
-    result = discovery_engine.discover_resources(query, domains)
-    
-    # Generate agent guidance
-    guidance = guidance_generator.generate_discovery_guidance(result)
-    
-    # Structured response for agents
-    response = {
-        "success": True,
-        "data": result["resources"],
-        "metadata": {
-            "execution_time_ms": result["timing"],
-            "discovery_methods_used": result["methods"]
-        },
-        "suggestions": {
-            "next_tools": guidance["next_tools"],
-            "reasoning_patterns": guidance["reasoning_patterns"]
-        },
-        "claude_guidance": {
-            "discovered_capabilities": guidance["endpoint_capabilities"],
-            "domain_intelligence": guidance["domain_patterns"]
-        }
-    }
-    
-    click.echo(json.dumps(response, indent=2))
-```
-
-### Core CLI Tools
-
-| Tool | Purpose | Key Features |
-|------|---------|--------------|
-| `cl_discover` | Scientific resource discovery | Multi-method fallbacks, auto-materialization |
-| `cl_sparql` | SPARQL queries with guardrails | Complexity analysis, discovery-first validation |
-| `cl_materialize` | Knowledge materialization | SHACL rules, convergence detection |
-| `cl_explain` | Reasoning chain explanation | PROV-O traces, temporal context |
-| `cl_validate` | SHACL validation | Consistency checking, improvement suggestions |
-| `cl_query_memory` | Semantic memory queries | OBQC validation, introspection |
-| `cl_resolve` | Universal identifier resolution | Self-configuring, cross-reference navigation |
-| `cl_orchestrate` | Multi-step workflow coordination | Research templates, checkpoint/resume |
-
-## Framework Integration
-
-### Claude Code Integration
-```python
-# Automatic tool registration for Claude Code
-from cogitarelink.adapters.claude_code import enable_claude_tools
-
-# Enable all CogitareLink tools for Claude Code
-enable_claude_tools(teaching_mode=True)
-
-# Tools automatically available:
-# - discover_science()
-# - sparql_query()  
-# - query_memory()
-# - explain_reasoning()
-```
-
-### Direct CLI Usage
+### Performance Requirements
 ```bash
-# Scientific discovery with materialization
-cl_discover "SARS-CoV-2 spike protein" --domains biology virology
-
-# SPARQL with discovery guardrails
-cl_sparql "SELECT ?protein WHERE { ?protein wdt:P31 wd:Q8054 }" --endpoint wikidata
-
-# Query semantic memory
-cl_query_memory "What spike proteins have been discovered?"
-
-# Explain reasoning chain
-cl_explain "SARS-CoV-2 spike protein binds ACE2 receptor" --include-provenance
+# Tools should execute in <100ms (except network calls)
+# Test cache effectiveness with repeated queries
+# Profile SPARQL query construction time
+time uv run cl_search "insulin" --format json
+time uv run cl_discover wikidata --capabilities
 ```
 
-## Teaching System Integration
-
-### Continuous Learning from Agent Interactions
-```python
-# All CLI tools automatically log interactions for learning
-@with_teaching
-@click.command()
-def discover(query, domains):
-    """Discovery with automatic teaching integration"""
-    
-    # Tool execution with automatic logging
-    result = execute_discovery(query, domains)
-    
-    # Teaching system learns from:
-    # - Successful discovery patterns
-    # - Query composition strategies  
-    # - Agent workflow preferences
-    # - Error recovery patterns
-    
-    return result
-```
-
-### Learning Metrics
-- **Query Success Rate**: Improved SPARQL composition through learning
-- **Research Workflow Completion**: Higher success rates for multi-step research
-- **Error Recovery**: Better agent recovery from failed operations
-- **Reasoning Quality**: More sophisticated biological research strategies
-
-## Security and Safety
-
-### Path and Input Validation
-```python
-# Secure path handling for CLI tools
-def validate_file_path(path: str) -> bool:
-    """Validate file paths for security"""
-    resolved = Path(path).resolve()
-    return resolved.is_relative_to(ALLOWED_BASE_PATH)
-
-# Input sanitization for SPARQL queries
-def sanitize_sparql_query(query: str) -> str:
-    """Remove potentially dangerous SPARQL constructs"""
-    # Remove UPDATE, DELETE, INSERT operations
-    # Validate query structure
-    return sanitized_query
-```
-
-### Cryptographic Verification
-```python
-# Ed25519 signing for entity verification
-def sign_entity(entity: Entity, private_key: bytes) -> SignedEntity:
-    """Sign entity with URDNA2015 canonicalization"""
-    canonical = entity.normalized  # URDNA2015 format
-    signature = ed25519.sign(canonical.encode(), private_key)
-    return SignedEntity(entity=entity, signature=signature)
-```
-
-## Project Memories and Context
-
-### Key Implementation Decisions
-- **uv for package management**: Fast, reliable dependency management
-- **Pydantic models**: Type safety and validation for all data structures
-- **SHACL as dual-purpose**: Both executable logic and LLM prompting templates
-- **Discovery-first pattern**: Prevents common agent errors through guardrails
-- **Immutable entities**: Ensures data integrity and reproducible research
-
-### Integration Points
-- **llmstxt/**: Reference documentation for LLM context
-- **config/**: Live configuration system for prompts and heuristics
-- **teaching/**: Continuous learning from agent interactions
-- **adapters/**: Framework-agnostic integration layer
-
-### Performance Considerations
-- **Schema caching**: Avoid repeated ontology discovery
-- **Result streaming**: Handle large biological datasets efficiently
-- **Context compaction**: Manage long research sessions within token limits
-- **Weak references**: Memory-efficient caching for large vocabularies
-
-## Success Metrics
-
-### Agent Experience
-- **Query Success Rate**: Agents compose effective SPARQL queries
-- **Research Workflow Completion**: Multi-step biological research succeeds
-- **Error Recovery**: Agents recover gracefully from failures
-- **Response Time**: Sub-10s response for most operations
-
-### Scientific Rigor
-- **Provenance Tracking**: Complete citation chains for all conclusions
-- **Cryptographic Verification**: Tamper-evident research data
-- **Reproducible Results**: Consistent entity signatures across sessions
-- **Knowledge Quality**: High-confidence biological insights
-
-### System Performance
-- **Memory Efficiency**: Handles large-scale biological datasets
-- **Context Management**: Maintains research continuity within token limits
-- **Caching Effectiveness**: Minimizes redundant network requests
-- **Teaching System Learning**: Improves agent guidance over time
-
-This unified CogitareLink architecture successfully combines semantic web rigor with agent intelligence, creating a living scientific assistant that continuously improves through real-world usage while maintaining the highest standards of scientific verification and reproducibility.
+This follows Jeremy Howard's approach: start simple, test immediately, build incrementally, refactor when patterns emerge.
