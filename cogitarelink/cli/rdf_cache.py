@@ -29,7 +29,8 @@ log = get_logger("rdf_cache")
 @click.option('--related', help='Find related terms via skos:broader/narrower, owl:sameAs')
 @click.option('--clear', 'clear_cache', is_flag=True, help='Clear all cached RDF data')
 @click.option('--clear-item', help='Clear specific cached item by name (e.g., foaf_vocab)')
-def search(query: str, result_type: Optional[str], list_cache: bool, get_graph: bool, force: bool, subclasses: Optional[str], properties: Optional[str], related: Optional[str], clear_cache: bool, clear_item: Optional[str]):
+@click.option('--update-metadata', help='Update semantic metadata for cached item (JSON string)')
+def search(query: str, result_type: Optional[str], list_cache: bool, get_graph: bool, force: bool, subclasses: Optional[str], properties: Optional[str], related: Optional[str], clear_cache: bool, clear_item: Optional[str], update_metadata: Optional[str]):
     """Search discovered vocabulary for SPARQL-ready URIs with semantic navigation.
     
     DISCOVERY WORKFLOW STEP 2 of 3:
@@ -80,6 +81,24 @@ def search(query: str, result_type: Optional[str], list_cache: bool, get_graph: 
             error_result = {
                 'error': f'Cache item clearing failed: {str(e)}',
                 'item': clear_item
+            }
+            click.echo(json.dumps(error_result, indent=2), err=True)
+            sys.exit(1)
+    
+    # Handle metadata update mode
+    if update_metadata:
+        try:
+            start_time = time.time()
+            result = update_cache_metadata(query, update_metadata)
+            execution_time = time.time() - start_time
+            result['execution_time_ms'] = round(execution_time * 1000, 2)
+            click.echo(json.dumps(result, indent=2))
+            return
+        except Exception as e:
+            error_result = {
+                'error': f'Metadata update failed: {str(e)}',
+                'item': query,
+                'metadata': update_metadata
             }
             click.echo(json.dumps(error_result, indent=2), err=True)
             sys.exit(1)
@@ -1105,6 +1124,89 @@ def clear_cache_item(item_name: str) -> Dict[str, Any]:
             'cache_key': cache_key,
             'error': str(e),
             'suggestion': 'Check cache permissions and item name'
+        }
+
+
+def update_cache_metadata(cache_name: str, metadata_json: str) -> Dict[str, Any]:
+    """Update semantic metadata for cached item - Claude Code driven annotation."""
+    
+    # Add rdf: prefix if not present
+    cache_key = cache_name if cache_name.startswith('rdf:') else f'rdf:{cache_name}'
+    
+    try:
+        # Parse the JSON metadata from Claude Code
+        metadata = json.loads(metadata_json)
+        
+        # Get existing cached data
+        cached_data = cache_manager.get(cache_key)
+        if not cached_data:
+            return {
+                'success': False,
+                'action': 'update_metadata',
+                'item': cache_name,
+                'cache_key': cache_key,
+                'error': f'Cache item "{cache_name}" not found',
+                'available_items': [k.replace('rdf:', '') for k in get_available_cache_keys()],
+                'suggestion': f'Use rdf_cache "" --list → See available items'
+            }
+        
+        # Create/update metadata structure
+        if 'claude_analysis' not in cached_data:
+            cached_data['claude_analysis'] = {}
+        
+        # Store Claude Code's analysis
+        cached_data['claude_analysis'].update({
+            'semantic_type': metadata.get('semantic_type', 'unknown'),
+            'domains': metadata.get('domains', ['general']),
+            'purpose': metadata.get('purpose', 'unknown'),
+            'dependencies': metadata.get('dependencies', []),
+            'usage_patterns': metadata.get('usage_patterns', []),
+            'confidence': metadata.get('confidence', 0.0),
+            'analysis_notes': metadata.get('notes', ''),
+            'analyzed_at': time.time(),
+            'analyzed_by': 'claude_code'
+        })
+        
+        # Save back to cache
+        cache_manager.set(cache_key, cached_data, ttl=86400)
+        
+        result = {
+            'success': True,
+            'action': 'update_metadata',
+            'item': cache_name,
+            'cache_key': cache_key,
+            'metadata_updated': cached_data['claude_analysis'],
+            'message': f'Updated semantic metadata for "{cache_name}"',
+            'claude_guidance': {
+                'annotation_stored': 'Claude Code analysis saved to cache',
+                'next_actions': [
+                    f'rdf_cache "{cache_name}" --graph → View annotated content',
+                    f'rdf_cache "" --list → See metadata in cache listing'
+                ],
+                'workflow_enhancement': 'Future rdf_cache queries will include your semantic analysis'
+            }
+        }
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        return {
+            'success': False,
+            'action': 'update_metadata',
+            'item': cache_name,
+            'error': f'Invalid JSON metadata: {str(e)}',
+            'suggestion': 'Provide valid JSON string with semantic metadata',
+            'example': '{"semantic_type": "context", "domains": ["biology"], "purpose": "term_mapping", "confidence": 0.9}'
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'action': 'update_metadata',
+            'item': cache_name,
+            'cache_key': cache_key,
+            'error': str(e),
+            'suggestion': 'Check cache permissions and metadata format'
         }
 
 

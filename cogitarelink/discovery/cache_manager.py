@@ -9,12 +9,42 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
+from typing import Set
 
 import diskcache as dc
 
 from ..core.debug import get_logger
 
 log = get_logger("cache_manager")
+
+
+@dataclass
+class SemanticMetadata:
+    """Semantic metadata for cached RDF resources."""
+    semantic_type: str  # "vocabulary", "context", "service", "schema"
+    domains: List[str]  # ["biology", "chemistry", "general"]
+    format_type: str    # "turtle", "json-ld", "rdf-xml"
+    purpose: str        # "schema_definition", "term_mapping", "endpoint_capability"
+    dependencies: List[str]  # Other vocabularies this builds on
+    provides: Dict[str, int]  # {"classes": 45, "properties": 120, "contexts": 1}
+    confidence_scores: Dict[str, float]  # Classification confidence
+    vocabulary_size: int  # Number of terms/triples
+    learned_at: float  # When semantic analysis was performed
+    usage_patterns: List[str]  # Common usage patterns discovered
+
+
+@dataclass 
+class EnhancedCacheEntry:
+    """Cache entry with semantic metadata."""
+    data: Dict[str, Any]
+    semantic_metadata: Optional[SemanticMetadata]
+    cached_at: float
+    ttl_seconds: int = 86400  # 24 hours default for RDF data
+    
+    @property
+    def is_expired(self) -> bool:
+        """Check if cache entry has expired."""
+        return time.time() > (self.cached_at + self.ttl_seconds)
 
 
 @dataclass
@@ -86,6 +116,90 @@ class CacheManager:
             log.debug(f"Cached data for {key}")
         except Exception as e:
             log.error(f"Failed to cache data for {key}: {e}")
+
+    def set_enhanced(self, key: str, data: Dict[str, Any], 
+                    semantic_metadata: Optional[SemanticMetadata] = None, 
+                    ttl: int = 86400) -> None:
+        """Set enhanced cache entry with optional semantic metadata."""
+        try:
+            entry = EnhancedCacheEntry(
+                data=data,
+                semantic_metadata=semantic_metadata,
+                cached_at=time.time(),
+                ttl_seconds=ttl
+            )
+            self.cache.set(key, asdict(entry), expire=ttl)
+            log.debug(f"Cached enhanced data for {key}")
+        except Exception as e:
+            log.error(f"Failed to cache enhanced data for {key}: {e}")
+
+    def get_enhanced(self, key: str) -> Optional[EnhancedCacheEntry]:
+        """Get enhanced cache entry with semantic metadata."""
+        try:
+            data = self.cache.get(key)
+            if data is None:
+                log.debug(f"No enhanced cache entry for {key}")
+                return None
+            
+            entry = EnhancedCacheEntry(**data)
+            if entry.is_expired:
+                log.debug(f"Enhanced cache expired for {key}")
+                self.cache.delete(key)
+                return None
+                
+            log.debug(f"Enhanced cache hit for {key}")
+            return entry
+            
+        except Exception as e:
+            log.warning(f"Failed to load enhanced cache for {key}: {e}")
+            return None
+
+    def update_semantic_metadata(self, key: str, semantic_metadata: SemanticMetadata) -> bool:
+        """Update semantic metadata for existing cache entry."""
+        try:
+            entry = self.get_enhanced(key)
+            if entry is None:
+                log.warning(f"Cannot update metadata for non-existent key: {key}")
+                return False
+            
+            entry.semantic_metadata = semantic_metadata
+            self.cache.set(key, asdict(entry), expire=entry.ttl_seconds)
+            log.debug(f"Updated semantic metadata for {key}")
+            return True
+            
+        except Exception as e:
+            log.error(f"Failed to update semantic metadata for {key}: {e}")
+            return False
+
+    def list_by_semantic_type(self, semantic_type: str) -> List[str]:
+        """List cached entries by semantic type (vocabulary, context, service)."""
+        try:
+            matching_keys = []
+            for key in self.cache:
+                if key.startswith("rdf:"):
+                    entry = self.get_enhanced(key)
+                    if (entry and entry.semantic_metadata and 
+                        entry.semantic_metadata.semantic_type == semantic_type):
+                        matching_keys.append(key)
+            return matching_keys
+        except Exception as e:
+            log.error(f"Failed to list by semantic type {semantic_type}: {e}")
+            return []
+
+    def list_by_domain(self, domain: str) -> List[str]:
+        """List cached entries by domain (biology, chemistry, etc.)."""
+        try:
+            matching_keys = []
+            for key in self.cache:
+                if key.startswith("rdf:"):
+                    entry = self.get_enhanced(key)
+                    if (entry and entry.semantic_metadata and 
+                        domain in entry.semantic_metadata.domains):
+                        matching_keys.append(key)
+            return matching_keys
+        except Exception as e:
+            log.error(f"Failed to list by domain {domain}: {e}")
+            return []
 
     def set_schema(self, endpoint: str, prefixes: Dict[str, str], 
             classes: Dict[str, Any] = None, 

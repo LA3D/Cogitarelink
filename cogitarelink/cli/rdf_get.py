@@ -16,6 +16,7 @@ from rdflib import Graph
 from pyld import jsonld
 
 from ..discovery.cache_manager import cache_manager
+from ..discovery.semantic_classifier import content_analyzer
 from ..core.debug import get_logger
 
 log = get_logger("rdf_get")
@@ -23,7 +24,7 @@ log = get_logger("rdf_get")
 
 @click.command()
 @click.argument('url')
-@click.option('--format', 'format_pref', help='Preferred format: json-ld, turtle, rdf-xml')
+@click.option('--format', 'format_pref', help='Preferred format: json-ld, turtle, rdf-xml, n3, n-triples')
 @click.option('--cache-as', help='Cache name for reuse (e.g., foaf_vocab, uniprot_core)')
 @click.option('--discover', is_flag=True, help='Show available formats when content negotiation fails')
 def fetch(url: str, format_pref: Optional[str], cache_as: Optional[str], discover: bool):
@@ -66,10 +67,120 @@ def fetch(url: str, format_pref: Optional[str], cache_as: Optional[str], discove
         sys.exit(1)
 
 
+def check_existing_cache(url: str, cache_as: Optional[str]) -> Dict[str, Any]:
+    """Check if URL or cache name already exists to prevent duplicates."""
+    
+    # Check if user-provided cache name already exists
+    if cache_as:
+        cache_key = f'rdf:{cache_as}'
+        existing_data = cache_manager.get(cache_key)
+        if existing_data:
+            return {
+                'success': True,
+                'already_cached': True,
+                'cache_key': cache_as,
+                'url': url,
+                'cache_status': 'already_exists',
+                'data': existing_data,
+                'claude_guidance': {
+                    'cache_optimization': [
+                        f'✅ Content already cached as "{cache_as}"',
+                        f'Use: rdf_cache "{cache_as}" --graph to read complete ontology',
+                        f'Use: rdf_cache "search_term" --type class to find vocabulary',
+                        'No need to re-fetch - cache is available for immediate use'
+                    ],
+                    'workflow_guidance': [
+                        'Step 1: ✅ rdf_get completed (cached)',
+                        'Step 2: rdf_cache for vocabulary search', 
+                        'Step 3: cl_select with discovered URIs'
+                    ],
+                    'next_actions': [
+                        f'rdf_cache "{cache_as}" --graph',
+                        f'rdf_cache "term" --type class',
+                        f'rdf_cache "" --list'
+                    ]
+                },
+                'suggestions': [
+                    f'Cache already exists: use rdf_cache "{cache_as}" --graph',
+                    f'Search vocabulary: rdf_cache "term" --type class',
+                    'List all caches: rdf_cache "" --list'
+                ],
+                'execution_time_ms': 0.0  # Cache hit - no network time
+            }
+    
+    # Check if URL has been cached under different names
+    # This is a basic check - could be enhanced to scan cache metadata
+    url_normalized = url.lower().rstrip('/')
+    potential_duplicates = []
+    
+    # Common URL variations to check
+    url_variations = [
+        url,
+        url.rstrip('/'),
+        url + '/',
+        url_normalized,
+        url_normalized + '/',
+        url_normalized.rstrip('/')
+    ]
+    
+    # Check for common cache patterns based on URL
+    if 'prov' in url_normalized:
+        potential_duplicates.extend(['prov_o', 'prov_ontology', 'prov_vocab'])
+    if 'foaf' in url_normalized:
+        potential_duplicates.extend(['foaf', 'foaf_vocab', 'foaf_ontology'])
+    if 'uniprot' in url_normalized:
+        potential_duplicates.extend(['uniprot', 'uniprot_service', 'uniprot_vocab'])
+    
+    for cache_name in potential_duplicates:
+        cache_key = f'rdf:{cache_name}'
+        existing_data = cache_manager.get(cache_key)
+        if existing_data:
+            return {
+                'success': True,
+                'already_cached': True,
+                'cache_key': cache_name,
+                'url': url,
+                'cache_status': 'found_similar',
+                'data': existing_data,
+                'claude_guidance': {
+                    'cache_optimization': [
+                        f'✅ Similar content may already be cached as "{cache_name}"',
+                        f'Check: rdf_cache "{cache_name}" --graph to verify content',
+                        f'If same content: use rdf_cache "{cache_name}" instead of re-fetching',
+                        'If different: specify unique --cache-as name'
+                    ],
+                    'workflow_guidance': [
+                        'Step 1: Verify existing cache content',
+                        'Step 2: Use existing cache or fetch with new name',
+                        'Step 3: Proceed with vocabulary search'
+                    ],
+                    'next_actions': [
+                        f'rdf_cache "{cache_name}" --graph',
+                        f'rdf_cache "" --list',
+                        'Compare content before deciding to re-fetch'
+                    ]
+                },
+                'suggestions': [
+                    f'Similar cache found: rdf_cache "{cache_name}" --graph',
+                    f'Verify content matches your needs',
+                    f'If different, use: rdf_get {url} --cache-as unique_name'
+                ],
+                'execution_time_ms': 0.0  # Cache hit - no network time
+            }
+    
+    # No duplicates found - proceed with fetching
+    return {'already_cached': False}
+
+
 def fetch_rdf_content(url: str, format_pref: Optional[str], cache_as: Optional[str], discover: bool) -> Dict[str, Any]:
     """Fetch RDF content with content negotiation."""
     
     log.debug(f"Fetching RDF from {url}")
+    
+    # Check for existing cache before fetching
+    cache_check = check_existing_cache(url, cache_as)
+    if cache_check['already_cached']:
+        return cache_check
     
     # Content negotiation priority
     accept_headers = get_accept_headers(format_pref)
@@ -115,10 +226,26 @@ def fetch_rdf_content(url: str, format_pref: Optional[str], cache_as: Optional[s
                         result['success'] = True
                         result['data'] = parsed_data
                         
-                        # Cache if requested
+                        # Cache if requested with content analysis
                         if cache_as:
-                            cache_result(cache_as, parsed_data)
+                            # Perform basic content analysis (no hardcoded classification)
+                            content_analysis = content_analyzer.analyze_content_structure(parsed_data, url)
+                            cache_result(cache_as, parsed_data, url)
                             result['cached'] = True
+                            result['content_analysis'] = {
+                                'format': content_analysis['format'],
+                                'size_metrics': content_analysis['size_metrics'],
+                                'structural_indicators': content_analysis['structural_indicators'],
+                                'references': content_analysis['references'],
+                                'claude_guidance': {
+                                    'analysis_available': 'Use rdf_cache to examine content and add semantic metadata',
+                                    'next_steps': [
+                                        f'rdf_cache "{cache_as}" --graph to read complete content',
+                                        'Analyze content patterns and classify semantic type/domain',
+                                        f'Use rdf_cache --update-metadata "{cache_as}" to store your analysis'
+                                    ]
+                                }
+                            }
                         
                         break  # Success, stop trying other formats
                 
@@ -141,15 +268,20 @@ def fetch_rdf_content(url: str, format_pref: Optional[str], cache_as: Optional[s
 def get_accept_headers(format_pref: Optional[str]) -> list[str]:
     """Get Accept headers in priority order based on preference."""
     
+    
     if format_pref == 'turtle':
-        return ['text/turtle', 'application/rdf+xml', 'application/ld+json']
+        return ['text/turtle', 'application/rdf+xml', 'application/ld+json', 'text/n3', 'application/n-triples']
     elif format_pref == 'json-ld':
-        return ['application/ld+json', 'text/turtle', 'application/rdf+xml']
+        return ['application/ld+json', 'text/turtle', 'application/rdf+xml', 'text/n3']
     elif format_pref == 'rdf-xml':
-        return ['application/rdf+xml', 'text/turtle', 'application/ld+json']
+        return ['application/rdf+xml', 'text/turtle', 'application/ld+json', 'text/n3']
+    elif format_pref == 'n3':
+        return ['text/n3', 'text/turtle', 'application/ld+json', 'application/rdf+xml']
+    elif format_pref == 'n-triples':
+        return ['application/n-triples', 'text/plain', 'text/turtle', 'application/ld+json']
     else:
-        # Default priority: JSON-LD first for Claude Code compatibility
-        return ['application/ld+json', 'text/turtle', 'application/rdf+xml']
+        # Default priority: JSON-LD first for Claude Code compatibility, then common formats
+        return ['application/ld+json', 'text/turtle', 'application/rdf+xml', 'text/n3', 'application/n-triples']
 
 
 def parse_rdf_response(response: httpx.Response, content_type: str) -> Optional[Dict[str, Any]]:
@@ -178,7 +310,7 @@ def parse_rdf_response(response: httpx.Response, content_type: str) -> Optional[
                     'summary': {
                         'type': 'json-ld',
                         'expanded_items': len(expanded),
-                        'context_terms': len(data.get('@context', {})) if isinstance(data.get('@context'), dict) else 0,
+                        'context_terms': get_context_term_count(data.get('@context', {})),
                         'indexed_classes': len(enhanced_structure.get('classes', {})),
                         'indexed_properties': len(enhanced_structure.get('properties', {})),
                         'query_templates': len(enhanced_structure.get('query_templates', []))
@@ -187,13 +319,43 @@ def parse_rdf_response(response: httpx.Response, content_type: str) -> Optional[
             else:
                 return {'format': 'json', 'data': data}
                 
-        elif 'turtle' in content_type or 'rdf+xml' in content_type:
+        elif any(fmt in content_type.lower() for fmt in ['turtle', 'rdf+xml', 'xml', 'n3', 'n-triples', 'nt', 'trig', 'n-quads', 'plain']):
             g = Graph()
             
-            if 'turtle' in content_type:
+            # Parse various RDF formats with comprehensive format detection
+            content_lower = content_type.lower()
+            
+            if 'turtle' in content_lower:
                 g.parse(data=response.text, format='turtle')
-            else:
+                serialization = 'turtle'
+            elif 'rdf+xml' in content_lower or ('xml' in content_lower and 'rdf' in content_lower):
                 g.parse(data=response.text, format='xml')
+                serialization = 'rdf-xml'
+            elif 'n3' in content_lower:
+                g.parse(data=response.text, format='n3')
+                serialization = 'n3'
+            elif 'n-triples' in content_lower or 'ntriples' in content_lower:
+                g.parse(data=response.text, format='nt')
+                serialization = 'n-triples'
+            elif 'trig' in content_lower:
+                g.parse(data=response.text, format='trig')
+                serialization = 'trig'
+            elif 'n-quads' in content_lower or 'nquads' in content_lower:
+                g.parse(data=response.text, format='nquads')
+                serialization = 'n-quads'
+            elif 'plain' in content_lower:
+                # text/plain often used for N-Triples
+                try:
+                    g.parse(data=response.text, format='nt')
+                    serialization = 'n-triples'
+                except:
+                    # If N-Triples fails, try turtle
+                    g.parse(data=response.text, format='turtle')
+                    serialization = 'turtle'
+            else:
+                # Try turtle as fallback since it's most common and forgiving
+                g.parse(data=response.text, format='turtle')
+                serialization = 'turtle'
             
             # Extract useful information
             namespaces = dict(g.namespaces())
@@ -203,14 +365,40 @@ def parse_rdf_response(response: httpx.Response, content_type: str) -> Optional[
             jsonld_data = g.serialize(format='json-ld')
             jsonld_parsed = json.loads(jsonld_data)
             
+            # Handle the case where RDFLib returns a list instead of a dict
+            if isinstance(jsonld_parsed, list):
+                # Wrap list in a @graph structure for consistency
+                jsonld_parsed = {
+                    '@context': {},
+                    '@graph': jsonld_parsed
+                }
+            
+            # CRITICAL FIX: Apply enhanced indexing to all RDF formats
+            # Expand JSON-LD for structured access
+            expanded = jsonld.expand(jsonld_parsed)
+            
+            # Create enhanced structure with JSON-LD 1.1 @container patterns
+            enhanced_structure = create_enhanced_vocabulary_index(jsonld_parsed, expanded)
+            
             return {
-                'format': 'rdf',
-                'serialization': 'turtle' if 'turtle' in content_type else 'rdf-xml',
+                'format': 'json-ld',  # Changed from 'rdf' to 'json-ld' for consistency
+                'serialization': serialization,
+                'raw': jsonld_parsed,  # Consistent with JSON-LD path
+                'expanded': expanded,  # Added expanded form
+                'enhanced': enhanced_structure,  # Added enhanced indexing
+                'contexts': jsonld_parsed.get('@context', {}),  # Added contexts
+                'graphs': jsonld_parsed.get('@graph', []),  # Added graphs
+                'vocabularies': extract_vocabularies(jsonld_parsed),  # Added vocabularies
                 'triples': triples_count,
                 'namespaces': namespaces,
-                'jsonld': jsonld_parsed,
                 'summary': {
-                    'type': 'rdf',
+                    'type': 'json-ld',  # Changed to json-ld for consistency
+                    'serialization_source': serialization,  # Track original format
+                    'expanded_items': len(expanded),
+                    'context_terms': get_context_term_count(jsonld_parsed.get('@context', {})),
+                    'indexed_classes': len(enhanced_structure.get('classes', {})),
+                    'indexed_properties': len(enhanced_structure.get('properties', {})),
+                    'query_templates': len(enhanced_structure.get('query_templates', [])),
                     'triples': triples_count,
                     'namespaces': len(namespaces)
                 }
@@ -221,16 +409,38 @@ def parse_rdf_response(response: httpx.Response, content_type: str) -> Optional[
         return None
 
 
+def get_context_term_count(context) -> int:
+    """Count terms in @context, handling both dict and list formats."""
+    if isinstance(context, dict):
+        return len(context)
+    elif isinstance(context, list):
+        count = 0
+        for ctx_item in context:
+            if isinstance(ctx_item, dict):
+                count += len(ctx_item)
+        return count
+    else:
+        return 0
+
+
 def extract_vocabularies(data: Dict[str, Any]) -> Dict[str, str]:
     """Extract vocabulary/namespace information from JSON-LD context."""
     
     vocabularies = {}
     context = data.get('@context', {})
     
+    # Handle both dict and list contexts (RDFLib may return either)
     if isinstance(context, dict):
         for key, value in context.items():
             if isinstance(value, str) and (value.startswith('http://') or value.startswith('https://')):
                 vocabularies[key] = value
+    elif isinstance(context, list):
+        # Process list of context objects
+        for ctx_item in context:
+            if isinstance(ctx_item, dict):
+                for key, value in ctx_item.items():
+                    if isinstance(value, str) and (value.startswith('http://') or value.startswith('https://')):
+                        vocabularies[key] = value
     
     return vocabularies
 
@@ -260,7 +470,7 @@ def create_enhanced_vocabulary_index(raw_data: Dict[str, Any], expanded_data: li
             'cross_references': {},  # owl:sameAs, rdfs:seeAlso
             'equivalences': {}  # owl:equivalentClass, owl:equivalentProperty
         },
-        'ontology_metadata': extract_ontology_metadata(raw_data, expanded_data),
+        'ontology_metadata': extract_ontology_metadata(expanded_data),
         'graph_metadata': {
             'size_bytes': len(str(raw_data).encode('utf-8')),
             'triples_count': len(expanded_data),
@@ -314,7 +524,7 @@ def create_enhanced_vocabulary_index(raw_data: Dict[str, Any], expanded_data: li
             item_id = item.get('@id', '')
             
             # Identify classes
-            if any('Class' in t for t in item_types) or any('void#class' in str(item) for key in item):
+            if any('Class' in t for t in item_types) or 'void#class' in str(item):
                 class_name = extract_short_name(item_id)
                 if class_name and class_name not in enhanced['classes']:
                     enhanced['classes'][class_name] = {
@@ -324,7 +534,7 @@ def create_enhanced_vocabulary_index(raw_data: Dict[str, Any], expanded_data: li
                     }
             
             # Identify properties
-            elif any('Property' in t for t in item_types) or any('void#property' in str(item) for key in item):
+            elif any('Property' in t for t in item_types) or 'void#property' in str(item):
                 prop_name = extract_short_name(item_id)
                 if prop_name and prop_name not in enhanced['properties']:
                     enhanced['properties'][prop_name] = {
@@ -474,7 +684,7 @@ def extract_semantic_relationships(enhanced: Dict[str, Any], expanded_data: list
                 enhanced['semantic_index']['cross_references'][item_id] = cross_refs
 
 
-def extract_ontology_metadata(raw_data: Dict[str, Any], expanded_data: list) -> Dict[str, Any]:
+def extract_ontology_metadata(expanded_data: list) -> Dict[str, Any]:
     """Extract ontology metadata (Dublin Core, OWL versioning, etc.)."""
     
     metadata = {}
@@ -490,8 +700,6 @@ def extract_ontology_metadata(raw_data: Dict[str, Any], expanded_data: list) -> 
         
         # Check if this is an ontology declaration
         if 'http://www.w3.org/2002/07/owl#Ontology' in item_types:
-            item_id = item.get('@id', '')
-            
             # Extract Dublin Core metadata
             metadata['title'] = extract_literal_value(item.get('http://purl.org/dc/terms/title', []))
             metadata['description'] = extract_literal_value(item.get('http://purl.org/dc/terms/description', []))
@@ -562,12 +770,17 @@ def generate_query_templates(domain: str, domain_classes: list) -> list:
     return templates
 
 
-def cache_result(cache_as: str, data: Dict[str, Any]) -> None:
-    """Cache the parsed RDF data."""
+def cache_result(cache_as: str, data: Dict[str, Any], url: str = "") -> None:
+    """Cache the parsed RDF data without automatic classification."""
     
     try:
-        cache_manager.set(f'rdf:{cache_as}', data, ttl=86400)  # 24 hours
-        log.debug(f"Cached RDF data as: rdf:{cache_as}")
+        # Cache with basic metadata structure (no automatic classification)
+        cache_key = f'rdf:{cache_as}'
+        cache_manager.set(cache_key, data, ttl=86400)
+        
+        log.info(f"Cached RDF data as: {cache_as}")
+        log.debug(f"Use rdf_cache to analyze and classify this content")
+        
     except Exception as e:
         log.error(f"Failed to cache data: {e}")
 

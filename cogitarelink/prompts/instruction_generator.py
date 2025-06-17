@@ -162,32 +162,40 @@ def generate_general_research_instructions() -> str:
 NEVER query SPARQL endpoints without discovering vocabulary first.
 The worst mistake is querying with guessed URIs (-$1000) rather than discovered vocabulary.
 
-**rdf_get**: Service description discovery (ALWAYS FIRST STEP)
+**rdf_get**: Content discovery and basic analysis (ALWAYS FIRST STEP)
 - rdf_get https://sparql.uniprot.org/sparql --format turtle --cache-as uniprot_service
 - rdf_get https://query.wikidata.org/sparql --format turtle --cache-as wikidata_service  
 - rdf_get http://xmlns.com/foaf/0.1/ --cache-as foaf_vocab → Cache vocabularies
-- Returns 126+ discovered classes (NOT guessed URIs) for safe querying
+- rdf_get https://raw.githubusercontent.com/mlcommons/croissant/refs/heads/main/docs/croissant.ttl --cache-as croissant_vocab → ML dataset metadata
+- Returns content_analysis with structural metrics for Claude Code to interpret
 
-**rdf_cache**: Semantic vocabulary navigation (SECOND STEP)
+**rdf_cache**: Semantic vocabulary navigation & Claude Code annotation (SECOND STEP)
 - rdf_cache "protein" --type class → up:Protein, up:Gene (REAL classes from service)
 - rdf_cache foaf_vocab --graph → Complete FOAF ontology for full context reading
 - rdf_cache --subclasses foaf:Agent → All Agent subclasses via rdfs:subClassOf
 - rdf_cache --properties foaf:Person → Properties with Person domain/range
 - rdf_cache --related foaf:knows → SKOS/OWL related terms and equivalences
 - rdf_cache "" --list → Enhanced metadata with semantic capabilities
+- rdf_cache vocab_name --update-metadata '{"semantic_type": "vocabulary", "domains": ["biology"]}' → Store Claude Code analysis
 - Returns ONLY vocabulary found in cached service descriptions + semantic relationships
 
 **FORBIDDEN ANTI-PATTERNS**:
-- ❌ cl_select "SELECT ?protein WHERE { ?protein a up:Protein }" ← GUESSED URI
+- ❌ cl_select "SELECT ?protein WHERE {{ ?protein a up:Protein }}" ← GUESSED URI
 - ❌ Starting with queries before rdf_get service description
 - ❌ Using prefixes like "up:" without discovery
 
-**ENHANCED SEMANTIC WORKFLOW**:
-- ✅ rdf_get endpoint → rdf_cache semantic navigation → cl_select with discovered URIs
+**SOFTWARE 2.0 WORKFLOW (Claude Code Intelligence)**:
+**Step 1**: rdf_get endpoint --cache-as vocab_name → Basic content discovery
+**Step 2**: Claude Code analyzes .content_analysis structure and patterns
+**Step 3**: rdf_cache vocab_name --update-metadata '{"semantic_type": "vocabulary", "domains": ["biology"]}' → Store insights
+**Step 4**: rdf_cache vocab_name --graph → Use annotated vocabulary for research
+**Step 5**: cl_select with discovered URIs + Claude reasoning → Intelligent queries
+
 - ✅ Read complete ontologies: rdf_cache ontology_name --graph (like ReadTool for code)
 - ✅ Navigate relationships: rdf_cache --subclasses <class> → Find all subclasses
 - ✅ Understand constraints: rdf_cache --properties <class> → Find valid properties
 - ✅ Follow connections: rdf_cache --related <term> → SKOS/OWL relationships
+- ✅ Store semantic insights: rdf_cache vocab --update-metadata '{"confidence": 0.95, "notes": "analysis"}'
 - ✅ Use jq for complex navigation: .enhanced_index.semantic_index.class_hierarchy
 
 ## Research Workflow Composition Patterns
@@ -279,7 +287,7 @@ cl_ask "{{ wd:Q7240673 wdt:P352 'P01308' }}"  # Verify UniProt connection
 ## Tool Composition Principles - Discovery-First Architecture
 
 **ENHANCED: Start with Semantic Discovery (RULE 0)**:
-- Step 1: rdf_get {SPARQL_ENDPOINT} --format turtle → Discover ontology with relationships
+- Step 1: rdf_get {{SPARQL_ENDPOINT}} --format turtle → Discover ontology with relationships
 - Step 2a: rdf_cache ontology_name --graph → Read complete ontology context (like ReadTool)
 - Step 2b: rdf_cache --subclasses <class> → Navigate semantic hierarchies
 - Step 2c: rdf_cache --properties <class> → Find valid property constraints
