@@ -133,7 +133,7 @@ def generate_general_research_instructions() -> str:
 
 ## Clean Tools Optimized for Claude Code
 
-### 4 Core Tools - Simple, Validated, JSON-Only Output with ReadTool-Style Pagination
+### 4 Core SPARQL Tools - Simple, Validated, JSON-Only Output with ReadTool-Style Pagination
 
 **cl_search**: Universal entity search with smart endpoint handling
 - cl_search "caffeine" --limit 5 → Uses efficient Wikidata API search  
@@ -156,7 +156,74 @@ def generate_general_research_instructions() -> str:
 - cl_ask "{{ ?protein a up:Protein }}" --endpoint uniprot → Check if proteins exist
 - Returns JSON with boolean result for existence/verification checks
 
+### 2 RDF Content Negotiation Tools - Discovery-First Guardrails ⚠️
+
+**CRITICAL: DISCOVERY-FIRST RULE (MOST IMPORTANT)**
+NEVER query SPARQL endpoints without discovering vocabulary first.
+The worst mistake is querying with guessed URIs (-$1000) rather than discovered vocabulary.
+
+**rdf_get**: Service description discovery (ALWAYS FIRST STEP)
+- rdf_get https://sparql.uniprot.org/sparql --format turtle --cache-as uniprot_service
+- rdf_get https://query.wikidata.org/sparql --format turtle --cache-as wikidata_service  
+- rdf_get http://xmlns.com/foaf/0.1/ --cache-as foaf_vocab → Cache vocabularies
+- Returns 126+ discovered classes (NOT guessed URIs) for safe querying
+
+**rdf_cache**: Semantic vocabulary navigation (SECOND STEP)
+- rdf_cache "protein" --type class → up:Protein, up:Gene (REAL classes from service)
+- rdf_cache foaf_vocab --graph → Complete FOAF ontology for full context reading
+- rdf_cache --subclasses foaf:Agent → All Agent subclasses via rdfs:subClassOf
+- rdf_cache --properties foaf:Person → Properties with Person domain/range
+- rdf_cache --related foaf:knows → SKOS/OWL related terms and equivalences
+- rdf_cache "" --list → Enhanced metadata with semantic capabilities
+- Returns ONLY vocabulary found in cached service descriptions + semantic relationships
+
+**FORBIDDEN ANTI-PATTERNS**:
+- ❌ cl_select "SELECT ?protein WHERE { ?protein a up:Protein }" ← GUESSED URI
+- ❌ Starting with queries before rdf_get service description
+- ❌ Using prefixes like "up:" without discovery
+
+**ENHANCED SEMANTIC WORKFLOW**:
+- ✅ rdf_get endpoint → rdf_cache semantic navigation → cl_select with discovered URIs
+- ✅ Read complete ontologies: rdf_cache ontology_name --graph (like ReadTool for code)
+- ✅ Navigate relationships: rdf_cache --subclasses <class> → Find all subclasses
+- ✅ Understand constraints: rdf_cache --properties <class> → Find valid properties
+- ✅ Follow connections: rdf_cache --related <term> → SKOS/OWL relationships
+- ✅ Use jq for complex navigation: .enhanced_index.semantic_index.class_hierarchy
+
 ## Research Workflow Composition Patterns
+
+### Semantic Ontology Navigation (New: Like ReadTool for Ontologies)
+```
+# 1. Discover available ontologies with metadata
+rdf_cache "" --list  # Enhanced metadata with semantic capabilities
+
+# 2. Read complete ontology context (like ReadTool for code files)
+rdf_cache foaf_vocab --graph  # Complete FOAF ontology for Claude to understand
+
+# 3. Navigate semantic relationships using discovered structure
+rdf_cache --subclasses foaf:Agent     # Find all Agent subclasses via rdfs:subClassOf
+rdf_cache --properties foaf:Person    # Find properties with Person domain/range
+rdf_cache --related foaf:knows        # Find SKOS/OWL related terms
+
+# 4. Use jq for complex navigation (Claude Code composability)
+rdf_cache foaf_vocab --graph | jq '.enhanced_index.classes | keys'  # All class names
+rdf_cache foaf_vocab --graph | jq '.enhanced_index.semantic_index.class_hierarchy'  # Hierarchies
+rdf_cache foaf_vocab --graph | jq '.full_graph'  # Complete ontology for Claude reading
+```
+
+### Size-Aware Ontology Reading (Following ReadTool Patterns)
+```
+# Safe loading with automatic guardrails
+rdf_cache small_vocab --graph          # < 100KB: loads immediately
+rdf_cache medium_vocab --graph         # 100KB-500KB: loads with warning  
+rdf_cache large_ontology --graph       # > 500KB: requires --force override
+
+# Override size warnings when needed
+rdf_cache uniprot_core --graph --force # Load large ontology with explicit intent
+
+# Get metadata first to understand size
+rdf_cache "" --list | jq '.vocabulary_summary.vocabulary_coverage'  # Size info per vocab
+```
 
 ### Entity Discovery Workflow (Search → Select → Explore)
 ```
@@ -209,13 +276,22 @@ cl_select "SELECT ?pathway WHERE {{ ?pathway a wp:Pathway }}" --endpoint wikipat
 cl_ask "{{ wd:Q7240673 wdt:P352 'P01308' }}"  # Verify UniProt connection
 ```
 
-## Tool Composition Principles for Claude Code
+## Tool Composition Principles - Discovery-First Architecture
 
-**Start with Search (discovery)**:
-- Use cl_search for universal entity discovery across any endpoint
-- Wikidata uses efficient API search, other endpoints use SPARQL fallback
-- Explore systematically with --offset for pagination
-- Returns clean JSON with next_page_command hints
+**ENHANCED: Start with Semantic Discovery (RULE 0)**:
+- Step 1: rdf_get {SPARQL_ENDPOINT} --format turtle → Discover ontology with relationships
+- Step 2a: rdf_cache ontology_name --graph → Read complete ontology context (like ReadTool)
+- Step 2b: rdf_cache --subclasses <class> → Navigate semantic hierarchies
+- Step 2c: rdf_cache --properties <class> → Find valid property constraints
+- Step 3: cl_select with discovered URIs + understood relationships → Intelligent queries
+- NEVER skip discovery - leads to failed queries with guessed URIs
+
+**Semantic Discovery Success Indicators**:
+- ✅ Found up:Protein + its 15 subclasses via rdfs:subClassOf in UniProt ontology
+- ✅ Found foaf:Person + domain/range constraints for 12 properties
+- ✅ Discovered skos:broader relationships in concept schemes
+- ✅ Read complete FOAF ontology (45KB) for full relationship understanding
+- ❌ Guessing relationships without semantic discovery
 
 **Use Select as Primary Exploration Tool**:
 - cl_select replaces cl_read - more flexible and powerful
@@ -231,6 +307,14 @@ cl_ask "{{ wd:Q7240673 wdt:P352 'P01308' }}"  # Verify UniProt connection
 - cl_describe when you need all available RDF data about an entity
 - Returns comprehensive JSON-LD data for deep analysis
 - Best for understanding complete entity structure
+
+**NEW: Use rdf_cache for Ontology Understanding**:
+- rdf_cache ontology_name --graph → Read complete ontology like ReadTool reads code
+- rdf_cache --subclasses foaf:Agent → Navigate class hierarchies via rdfs:subClassOf
+- rdf_cache --properties foaf:Person → Find valid properties via rdfs:domain/range
+- rdf_cache --related foaf:knows → Discover SKOS/OWL relationships and equivalences
+- Size guardrails prevent context overload (500KB limit, --force override)
+- jq-compatible output for complex semantic navigation
 
 **Pagination Patterns (like ReadTool)**:
 All tools support systematic exploration:

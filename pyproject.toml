@@ -47,6 +47,10 @@ cl_select = "cogitarelink.cli.cl_select:select"
 cl_describe = "cogitarelink.cli.cl_describe:describe"
 cl_ask = "cogitarelink.cli.cl_ask:ask"
 
+# RDF content negotiation and caching tools
+rdf_get = "cogitarelink.cli.rdf_get:fetch"
+rdf_cache = "cogitarelink.cli.rdf_cache:search"
+
 # Research agent entry point for Claude Code integration
 cogitarelink = "cogitarelink.cli.cogitarelink:main"
 
