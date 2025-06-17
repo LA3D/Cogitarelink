@@ -41,12 +41,11 @@ dev = [
 ]
 
 [project.scripts]
-# Clean minimal CLI tools following Claude Code patterns
+# Clean semantic web tools optimized for Claude Code
 cl_search = "cogitarelink.cli.cl_search:search"
-cl_fetch = "cogitarelink.cli.cl_fetch:fetch"
-cl_discover = "cogitarelink.cli.cl_discover:discover"
-cl_query = "cogitarelink.cli.cl_query:query"
-cl_resolve = "cogitarelink.cli.cl_resolve:resolve"
+cl_select = "cogitarelink.cli.cl_select:select"
+cl_describe = "cogitarelink.cli.cl_describe:describe"
+cl_ask = "cogitarelink.cli.cl_ask:ask"
 
 # Research agent entry point for Claude Code integration
 cogitarelink = "cogitarelink.cli.cogitarelink:main"

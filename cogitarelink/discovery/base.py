@@ -94,7 +94,7 @@ class DiscoveryEngine:
         """Discover endpoint schema with caching."""
         
         # Check cache first
-        cached = cache_manager.get(endpoint)
+        cached = cache_manager.get_schema(endpoint)
         if cached:
             log.debug(f"Using cached schema for {endpoint}")
             return DiscoveryResult(
@@ -110,7 +110,7 @@ class DiscoveryEngine:
             schema = self.KNOWN_ENDPOINTS[endpoint]
             
             # Cache the result using diskcache
-            cache_manager.set(
+            cache_manager.set_schema(
                 endpoint=endpoint,
                 prefixes=schema["prefixes"],
                 patterns=schema["patterns"],
@@ -145,22 +145,22 @@ class DiscoveryEngine:
         url = f"https://{endpoint}/sparql"
         
         try:
-            # Use SPARQLWrapper for proper SPARQL querying
+            # Use SPARQLWrapper for lightweight endpoint testing
             sparql = SPARQLWrapper(url)
             sparql.setReturnFormat(JSON)
-            sparql.setTimeout(10)  # 10 second timeout
+            sparql.setTimeout(5)  # Shorter timeout for simple test
             
-            # Try a simple query to detect basic capabilities
+            # Test endpoint availability with minimal query (not expensive predicate discovery)
             sparql.setQuery("""
-                SELECT DISTINCT ?predicate WHERE {
-                    ?s ?predicate ?o .
-                } LIMIT 5
+                SELECT ?s WHERE {
+                    ?s a ?type .
+                } LIMIT 1
             """)
             
             results = sparql.query().convert()
-            log.debug(f"Introspected {endpoint}: found {len(results.get('results', {}).get('bindings', []))} predicates")
+            log.debug(f"Endpoint {endpoint} responded successfully")
             
-            # Basic discovered prefixes
+            # Basic discovered prefixes (no expensive introspection)
             discovered_prefixes = {
                 "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
                 "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -168,7 +168,7 @@ class DiscoveryEngine:
             }
             
         except Exception as e:
-            log.warning(f"SPARQL introspection failed for {endpoint}: {e}")
+            log.warning(f"SPARQL endpoint test failed for {endpoint}: {e}")
             # Fallback to minimal prefixes
             discovered_prefixes = {
                 "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -186,7 +186,7 @@ class DiscoveryEngine:
         ]
         
         # Cache minimal result using diskcache
-        cache_manager.set(
+        cache_manager.set_schema(
             endpoint=endpoint,
             prefixes=discovered_prefixes,
             patterns=basic_patterns,

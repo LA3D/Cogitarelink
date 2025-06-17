@@ -21,10 +21,10 @@ A semantic web-powered scientific research assistant that combines rigorous know
 - **Verifiable Science**: Every conclusion traceable to sources with cryptographic verification
 - **Framework Agnostic**: Works with Claude Code, DSPy, LangGraph, or any agent framework
 
-## Research Agent Integration with Claude Code
+## CogitareLink: Simple Semantic Web Tools for Claude Code
 
-### Architecture Overview
-CogitareLink enhances Claude Code through **instruction-driven enhancement** rather than architectural modification. The core insight: transform Claude Code into a research assistant by providing enhanced instructions and maintaining parallel session state.
+### Philosophy: Intelligence in Prompts, Not Code
+Following Claude Code's tool design patterns (ReadTool, EditTool, BashTool), CogitareLink provides **simple, reliable tools** that return clean data. Claude Code provides the intelligence through composition and reasoning.
 
 ### Parallel Session Design
 - **Claude Code Session**: `.claude/session.json` (untouched - cost tracking, model usage)
@@ -32,33 +32,46 @@ CogitareLink enhances Claude Code through **instruction-driven enhancement** rat
 - **Session Linking**: Research sessions reference Claude Code sessions for correlation
 - **Independent Persistence**: Both systems persist separately using debounced patterns
 
-### Entry Point: `cogitarelink` Command
+## Simple Tools (Following Claude Code Patterns)
+
+### Core Tools - Fast, Reliable, Composable
 ```bash
-cogitarelink init biology                    # Initialize research mode
-cogitarelink status                         # Show research session state  
-cogitarelink remind discovery               # Print discovery-first instructions
-cogitarelink remind protein-workflow        # Print protein research patterns
-cogitarelink resume cl_research_20240615    # Resume previous research session
+cl_search "caffeine" --limit 5              # Find entities (like ReadTool - simple, fast)
+cl_fetch Q60235                             # Get entity properties (like ReadTool - complete data)  
+cl_resolve "58-08-2"                        # Cross-reference identifiers (like EditTool - precise)
+cl_discover wikidata                        # Test endpoint capabilities (like BashTool - reliable)
+cl_query "SELECT ?s ?p ?o LIMIT 5"          # Execute SPARQL (like BashTool - direct)
 ```
 
-**Key Behavior**: Prints research instructions directly to Claude Code's context, enabling enhanced research capabilities without architectural changes.
+**Key Principle**: Tools return clean JSON data. Claude Code composes them into research workflows.
 
-## CLI Tool Refactoring Plan (Jeremy Howard Style)
+## Research Workflow Patterns (Intelligence via Prompts)
 
-### Overview
-Refactoring completed ✅ - 5 CLI tools built following Claude Code patterns with discovery-first guardrails and session-aware caching.
+### Discovery-First Pattern (Like BashTool Safety)
+**ALWAYS run cl_discover before cl_query:**
+```bash
+cl_discover wikidata                         # Cache endpoint capabilities  
+cl_query "SELECT ?item WHERE..." --limit 5  # Execute with known schema
+```
+**Why**: Prevents expensive queries that cause 403 Forbidden errors.
 
-Built clean foundation using proper libraries (diskcache, SPARQLWrapper, rdflib, pyld) instead of custom implementations.
+### Progressive Search Pattern (Like ReadTool→EditTool)
+**Start broad, narrow systematically:**
+```bash
+cl_search "caffeine" --limit 5               # Find candidate entities
+cl_fetch Q60235                              # Get complete entity data
+cl_resolve "58-08-2"                         # Follow cross-references to other databases
+```
 
-### Phase 2: CLI Tools - COMPLETED ✅
-Created 5 production-ready CLI tools:
-- **cl_search**: Entity search (Wikidata API + SPARQL endpoints)
-- **cl_fetch**: Entity data retrieval with structured output
-- **cl_discover**: Endpoint capability discovery with caching
-- **cl_query**: SPARQL execution with discovery-first guardrails
-- **cl_resolve**: Cross-reference resolution across databases
-
-All tools follow Claude Code patterns: simple parameters, fast execution, structured responses.
+### Cross-Domain Research (Composition Pattern)
+**Biology→Chemistry workflow:**
+```bash
+cl_search "spike protein" --limit 3          # Find protein entities
+cl_fetch Q206340                             # Get protein properties  
+# Look for: P352 (UniProt), P592 (ChEMBL), P231 (CAS)
+cl_resolve "P04637"                          # Follow to UniProt
+cl_resolve "CHEMBL113"                       # Follow to ChEMBL
+```
 
 ### Phase 3: Research Agent Entry Point - IN PROGRESS 🚧
 
