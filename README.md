@@ -30,17 +30,33 @@ All tools return structured JSON for systematic analysis, not human-readable tex
 ## Quick Start
 
 ```bash
-# Install
+# Install (one-time setup)
 pip install git+https://github.com/LA3D/Cogitarelink.git
 
-# Initialize in Claude Code session
+# Initialize semantic capabilities in Claude Code session
 cogitarelink
-
-# Basic workflow
-rdf_get https://sparql.uniprot.org/sparql --cache-as uniprot
-cl_search "insulin" --endpoint uniprot --limit 5
-cl_describe P01308 --endpoint uniprot
 ```
+
+Then simply ask Claude questions that require semantic web research:
+
+**Human**: *"Can you research insulin and its protein interactions? I'm interested in understanding the molecular pathways."*
+
+**Claude Code automatically**:
+- Determines relevant databases (UniProt, Wikidata, WikiPathways)
+- Discovers vocabulary structures with `rdf_get` and `rdf_cache`
+- Searches for insulin-related entities with `cl_search`
+- Follows cross-references between databases with `cl_describe`
+- Applies reasoning templates with `cl_construct` to find pathway relationships
+- Synthesizes findings into comprehensive insights
+
+**Human**: *"What are the genetic variants associated with diabetes medications?"*
+
+**Claude Code autonomously**:
+- Researches pharmacogenomics databases
+- Discovers drug-gene interaction vocabularies  
+- Queries for medication entities and genetic markers
+- Maps relationships across chemical and biological databases
+- Provides structured analysis of variant-drug associations
 
 ## The Seven Tools
 
