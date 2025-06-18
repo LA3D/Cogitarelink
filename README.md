@@ -189,6 +189,57 @@ uv sync && uv pip install -e .
 uv run pytest tests/ -v
 ```
 
+### Prompt Distillation: From Expert Sessions to Tool Instructions
+
+CogitareLink follows a simple **Session → Distillation → Integration** approach to capture domain expertise and convert it into tool guidance for Claude Code.
+
+**1. Session Capture** (Claude's Memory Creation)  
+Claude documents its own research sessions through human interactions, creating memory narratives using the template in `cogitarelink/patterns/use_cases/template.md`:
+
+```markdown
+**Domain**: biology  
+**Goal**: Find drug targets related to COVID-19 spike protein
+
+## Session Narrative
+I tried direct UniProt search first but it failed with timeouts. The breakthrough 
+came when I used Wikidata as a hub - cl_search "SARS-CoV-2" found the entity, 
+then cl_describe gave me P352 cross-reference to UniProt P0DTC2...
+
+### What Worked
+- Wikidata → P352 cross-reference → UniProt workflow (5x faster than direct search)
+- Service discovery with rdf_get prevented vocabulary guessing errors
+
+### What Failed  
+- Direct UniProt text search (800ms timeouts, needs FILTER regex patterns)
+- Assuming all endpoints work like Wikidata API
+```
+
+**2. Memory Distillation** (Claude Self-Analysis)  
+Claude analyzes its own session narratives across multiple use cases and extracts CLAUDE.md-style patterns:
+
+```markdown
+### Biology Research Patterns  
+- Use Wikidata as discovery hub, then follow cross-references to domain databases
+- P352 (UniProt protein ID) is highly reliable bridge property for protein research
+
+### Anti-Patterns to Avoid
+- NEVER assume all endpoints support Wikidata-style API search → UniProt needs FILTER patterns
+- Don't try direct domain database search → cross-reference following is more reliable
+```
+
+**3. Instruction Integration** (Manual)  
+Valuable patterns get manually added to CLAUDE.md, which feeds into tool instruction prompts via `instruction_generator.py`. This creates tool-specific reminders that appear during Claude Code sessions:
+
+```python
+# Extracted from real session failures become tool reminders
+⚡ cl_search reminders:
+- Biology research: Use Wikidata hub, then follow P352 to UniProt  
+- NEVER assume direct domain database search works
+- Cache findings with rdf_cache for vocabulary analysis
+```
+
+**Philosophy**: Claude learns from its own experiences through human interaction. As Claude conducts semantic web research with humans, it creates session memories, then distills patterns from those memories to improve future tool usage. This creates a self-improving agent intelligence system where Claude's semantic web capabilities evolve through accumulated research experience.
+
 ## License
 
 MIT - See LICENSE file for details.
