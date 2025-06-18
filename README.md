@@ -88,6 +88,19 @@ cl_select "SELECT ?protein WHERE { ?protein a up:Protein }" --endpoint uniprot -
 cl_construct SC_Transitive --focus up:Protein --endpoint uniprot
 ```
 
+**Vocabulary-Driven Intelligence**:
+
+Claude doesn't randomly construct queries. Instead, it follows a systematic discovery process:
+
+1. **Service Discovery**: Retrieves SPARQL service descriptions to understand endpoint capabilities
+2. **Ontology Acquisition**: Extracts vocabulary prefixes, fetches and caches complete ontologies  
+3. **Semantic Understanding**: Analyzes class hierarchies, property domains/ranges, and relationship patterns
+4. **Informed Querying**: Uses cached vocabulary knowledge to construct precise SPARQL queries
+5. **Knowledge Materialization**: Applies CONSTRUCT templates to derive new facts from ontological semantics
+6. **Dynamic Reasoning**: Interprets materialized knowledge within context using symbolic ontology structure
+
+This creates a **semantic feedback loop**: each query enriches Claude's understanding of the vocabulary, enabling more sophisticated subsequent queries and reasoning.
+
 **Why This Works**:
 - Claude's base knowledge includes complete semantic web expertise (RDF, SPARQL, JSON-LD)
 - Tools provide capabilities, intelligence lives in Claude's reasoning
