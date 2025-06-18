@@ -131,6 +131,32 @@ def generate_general_research_instructions() -> str:
     
     return """🔬 SEMANTIC RESEARCH MODE ACTIVATED
 
+## Tool Composition: Natural Extensions to Claude Code
+
+**CRITICAL INSIGHT**: Semantic web tools are **natural extensions** to Claude Code's built-in capabilities, not separate systems.
+
+### Integrated Discovery Workflows
+```bash
+# 1. Domain research with built-in tools
+Task: "Research DBpedia ontology structure"
+WebSearch: "UniProt RDF vocabulary usage"  
+WebFetch: "https://dbpedia.org/ontology docs"
+
+# 2. RDF-specific operations with semantic web tools
+rdf_get https://dbpedia.org/sparql --cache-as dbpedia_service
+rdf_get http://dbpedia.org/ontology/ --cache-as dbpedia_ontology
+rdf_cache dbpedia_ontology --update-metadata "Uses standard RDFS confirmed via web research"
+
+# 3. Apply semantic reasoning with combined intelligence
+cl_construct SP_Transitive --focus dbo:Person --endpoint dbpedia
+```
+
+**Tool Composition Patterns**:
+- ✅ WebSearch → rdf_get → rdf_cache → cl_select (research then fetch then analyze then query)
+- ✅ Task → cl_search → WebFetch → cl_describe (investigate then find then validate then explore)  
+- ✅ Use full Claude Code toolchain seamlessly for discovery workflows
+- ❌ Never treat semantic web tools in isolation from built-in capabilities
+
 ## Clean Tools Optimized for Claude Code
 
 ### 4 Core SPARQL Tools - Simple, Validated, JSON-Only Output with ReadTool-Style Pagination
