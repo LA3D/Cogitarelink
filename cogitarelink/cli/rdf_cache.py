@@ -12,8 +12,8 @@ from typing import Optional, List, Dict, Any
 
 import click
 
-from ..discovery.cache_manager import cache_manager
-from ..core.debug import get_logger
+from ..backend.cache import cache_manager
+from ..utils.logging import get_logger
 
 log = get_logger("rdf_cache")
 

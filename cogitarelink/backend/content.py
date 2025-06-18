@@ -10,8 +10,8 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from .cache_manager import SemanticMetadata
-from ..core.debug import get_logger
+from .cache import SemanticMetadata
+from ..utils.logging import get_logger
 
 log = get_logger("content_analyzer")
 

@@ -13,8 +13,8 @@ from typing import Optional
 import click
 import httpx
 
-from ..discovery.universal import discover_sparql_endpoints, build_prefixed_query
-from ..core.debug import get_logger
+from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query
+from ..utils.logging import get_logger
 
 log = get_logger("cl_select")
 

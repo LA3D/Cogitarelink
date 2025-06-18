@@ -15,8 +15,8 @@ import httpx
 from rdflib import Graph
 from pyld import jsonld
 
-from ..discovery.universal import discover_sparql_endpoints, build_prefixed_query, get_entity_uri
-from ..core.debug import get_logger
+from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query, get_entity_uri, find_endpoint_for_entity
+from ..utils.logging import get_logger
 
 log = get_logger("cl_describe")
 
@@ -100,7 +100,6 @@ def describe(entity: str, endpoint: Optional[str], timeout: int):
                     sys.exit(1)
         else:
             # Auto-detect endpoint based on entity ID
-            from ..discovery.universal import find_endpoint_for_entity
             endpoint_url = find_endpoint_for_entity(entity)
             if not endpoint_url:
                 endpoint_url = discover_sparql_endpoints().get("wikidata")

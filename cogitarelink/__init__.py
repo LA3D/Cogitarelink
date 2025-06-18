@@ -15,6 +15,6 @@ with discovery-first guardrails and multi-agent coordination capabilities.
 __version__ = "0.1.0"
 
 # Core modules only - minimal clean architecture
-from . import core, discovery, cli
+from . import backend, utils, cli, patterns, prompts
 
-__all__ = ["core", "discovery", "cli"]
+__all__ = ["backend", "utils", "cli", "patterns", "prompts"]

@@ -15,9 +15,9 @@ import httpx
 from rdflib import Graph
 from pyld import jsonld
 
-from ..discovery.cache_manager import cache_manager
-from ..discovery.semantic_classifier import content_analyzer
-from ..core.debug import get_logger
+from ..backend.cache import cache_manager
+from ..backend.content import content_analyzer
+from ..utils.logging import get_logger
 
 log = get_logger("rdf_get")
 

@@ -13,7 +13,7 @@ from typing import Set
 
 import diskcache as dc
 
-from ..core.debug import get_logger
+from ..utils.logging import get_logger
 
 log = get_logger("cache_manager")
 

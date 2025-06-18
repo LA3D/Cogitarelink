@@ -1,1 +1,0 @@
-"""Simple discovery and caching for SPARQL endpoints."""

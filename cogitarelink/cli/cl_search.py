@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any
 import click
 import httpx
 
-from ..core.debug import get_logger
+from ..utils.logging import get_logger
 
 log = get_logger("cl_search")
 

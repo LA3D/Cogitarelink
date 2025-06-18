@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 
-from ..discovery.base import discovery_engine
-from ..discovery.cache_manager import cache_manager
-from ..core.debug import get_logger
+from .sparql import sparql_engine
+from .cache import cache_manager
+from ..utils.logging import get_logger
 
 log = get_logger("discovery_infrastructure")
 
