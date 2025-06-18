@@ -104,7 +104,7 @@ def discover_sparql_endpoints() -> Dict[str, str]:
     
     try:
         # Query Wikidata for databases with SPARQL endpoints
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
             response = client.get(
                 "https://query.wikidata.org/sparql",
                 params={

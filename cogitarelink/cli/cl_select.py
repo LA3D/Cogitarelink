@@ -14,6 +14,7 @@ import click
 import httpx
 
 from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query
+from ..backend.cache import cache_manager
 from ..utils.logging import get_logger
 
 log = get_logger("cl_select")
@@ -132,8 +133,11 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
         
         log.debug(f"Executing SELECT query on {endpoint_url}:\\n{prefixed_query}")
         
-        # Execute query
-        with httpx.Client(timeout=timeout) as client:
+        # WORKFLOW GUARDRAIL: Check for vocabulary discovery (Claude Code pattern)
+        vocabulary_reminder = check_vocabulary_discovery(endpoint)
+        
+        # Execute query with redirect support for semantic web URIs
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             response = client.get(
                 endpoint_url,
                 params={
@@ -142,6 +146,17 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
                 }
             )
             response.raise_for_status()
+            
+            # Capture redirect information for semantic web debugging
+            redirect_info = None
+            if len(response.history) > 0:
+                redirect_info = {
+                    "original_url": str(response.history[0].url),
+                    "final_url": str(response.url),
+                    "redirect_count": len(response.history),
+                    "redirect_chain": [str(r.url) for r in response.history] + [str(response.url)]
+                }
+            
             data = response.json()
         
         # Extract results
@@ -166,6 +181,10 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
             "success": True
         }
         
+        # Add redirect information if any occurred
+        if redirect_info:
+            output["redirect_info"] = redirect_info
+        
         # Add exploration hints like ReadTool
         if has_more:
             # Create next page command by updating offset in original query
@@ -184,8 +203,8 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
                 hints.append(f"Variables returned: {', '.join(sorted(variables))}")
             
             # Check for common patterns
-            uri_count = sum(1 for result in results for var, val in result.items() if val.get("type") == "uri")
-            literal_count = sum(1 for result in results for var, val in result.items() if val.get("type") == "literal")
+            uri_count = sum(1 for result in results for val in result.values() if val.get("type") == "uri")
+            literal_count = sum(1 for result in results for val in result.values() if val.get("type") == "literal")
             
             if uri_count > 0:
                 hints.append(f"Found {uri_count} URI references")
@@ -199,6 +218,10 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
             
             output["exploration_hints"] = hints
         
+        # Add vocabulary reminder if needed (Claude Code workflow enforcement)
+        if vocabulary_reminder:
+            output["system_reminder"] = vocabulary_reminder
+        
         click.echo(json.dumps(output))
     
     except Exception as e:
@@ -209,8 +232,47 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
             "query_type": "SELECT",
             "success": False
         }
+        
+        # Add vocabulary reminder even on errors (workflow issue separate from query issue)
+        if 'vocabulary_reminder' in locals() and vocabulary_reminder:
+            error_output["system_reminder"] = vocabulary_reminder
+        
         click.echo(json.dumps(error_output), err=True)
         sys.exit(1)
+
+
+def check_vocabulary_discovery(endpoint: str) -> Optional[str]:
+    """Check if SPARQL service description has been discovered (Claude Code pattern)."""
+    if not endpoint or endpoint == "wikidata":
+        # Wikidata is well-known, skip check
+        return None
+    
+    # Get the actual endpoint URL for service description discovery
+    from ..backend.sparql import discover_sparql_endpoints
+    endpoints = discover_sparql_endpoints()
+    endpoint_url = endpoints.get(endpoint)
+    
+    if not endpoint_url:
+        return None  # This will be caught by earlier endpoint validation
+    
+    # Look for cached SPARQL service description for this endpoint
+    cache_key = f"rdf:{endpoint}_service"
+    enhanced_entry = cache_manager.get_enhanced(cache_key)
+    
+    if not enhanced_entry:
+        return (
+            f"⚠️ DISCOVERY-FIRST REMINDER: No SPARQL service description discovered for '{endpoint}'. "
+            f"Use 'rdf_get {endpoint_url} --cache-as {endpoint}_service' to discover service capabilities first. "
+            f"This fetches the SPARQL 1.1 service description via HTTP GET."
+        )
+    
+    if enhanced_entry.semantic_metadata is None:
+        return (
+            f"⚠️ METADATA-FIRST REMINDER: Service description discovered but not analyzed for '{endpoint}'. "
+            f"Use 'rdf_cache {endpoint}_service --update-metadata {{...}}' to store semantic analysis of the service capabilities."
+        )
+    
+    return None
 
 
 if __name__ == "__main__":

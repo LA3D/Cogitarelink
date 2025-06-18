@@ -131,7 +131,7 @@ def search_wikidata_api(query: str, limit: int, offset: int = 0) -> Dict[str, An
         # For now, we'll request up to limit + offset to simulate pagination
         api_limit = min(50, limit + offset)  # Wikidata API max is 50
         
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
             response = client.get("https://www.wikidata.org/w/api.php", params={
                 "action": "wbsearchentities",
                 "search": query,
@@ -189,7 +189,7 @@ OFFSET {offset}
 LIMIT {limit}
 """
         
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
             response = client.get(endpoint_url, params={
                 "query": sparql_query.strip(),
                 "format": "json"

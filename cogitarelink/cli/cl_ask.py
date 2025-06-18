@@ -113,7 +113,7 @@ def ask(query: str, endpoint: Optional[str], timeout: int):
         log.debug(f"Executing ASK query on {endpoint_url}:\\n{prefixed_query}")
         
         # Execute query
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             response = client.get(
                 endpoint_url,
                 params={

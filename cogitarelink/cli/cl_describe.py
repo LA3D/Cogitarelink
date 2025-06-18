@@ -128,7 +128,7 @@ def describe(entity: str, endpoint: Optional[str], timeout: int):
             accept_header = "text/turtle"
             rdf_format = "turtle"
         
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             response = client.get(
                 endpoint_url,
                 params={"query": prefixed_query},

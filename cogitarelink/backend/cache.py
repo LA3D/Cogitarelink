@@ -79,15 +79,14 @@ class CacheManager:
         log.debug(f"Cache directory: {self.cache_dir}")
 
     def get(self, key: str) -> Optional[Any]:
-        """Get cached data by key (general interface)."""
+        """Get cached data by key (delegates to enhanced pathway for consistency)."""
         try:
-            data = self.cache.get(key)
-            if data is None:
-                log.debug(f"No cache entry for {key}")
-                return None
-                
-            # If it's a schema entry, check expiration
+            # Special handling for schema entries (keep existing behavior)
             if key.startswith("schema:"):
+                data = self.cache.get(key)
+                if data is None:
+                    log.debug(f"No cache entry for {key}")
+                    return None
                 schema = CachedSchema(**data)
                 if schema.is_expired:
                     log.debug(f"Cache expired for {key}")
@@ -95,10 +94,13 @@ class CacheManager:
                     return None
                 log.debug(f"Cache hit for {key}")
                 return schema
+            
+            # For all other entries, delegate to enhanced pathway
+            enhanced_entry = self.get_enhanced(key)
+            if enhanced_entry:
+                return enhanced_entry.data
             else:
-                # For non-schema entries, return data directly
-                log.debug(f"Cache hit for {key}")
-                return data
+                return None
             
         except Exception as e:
             log.warning(f"Failed to load cache for {key}: {e}")
@@ -109,11 +111,18 @@ class CacheManager:
         return self.get(f"schema:{endpoint}")
 
     def set(self, key: str, data: Any, ttl: int = 3600) -> None:
-        """Set cached data by key (general interface)."""
+        """Set cached data by key (delegates to enhanced pathway for consistency)."""
         try:
-            # Use diskcache's built-in expiration
-            self.cache.set(key, data, expire=ttl)
-            log.debug(f"Cached data for {key}")
+            # Special handling for schema entries (keep existing behavior)
+            if key.startswith("schema:"):
+                self.cache.set(key, data, expire=ttl)
+                log.debug(f"Cached schema data for {key}")
+                return
+            
+            # For all other entries, delegate to enhanced pathway
+            # Initialize with no semantic metadata (can be added later)
+            self.set_enhanced(key, data, semantic_metadata=None, ttl=ttl)
+            
         except Exception as e:
             log.error(f"Failed to cache data for {key}: {e}")
 
@@ -141,7 +150,41 @@ class CacheManager:
                 log.debug(f"No enhanced cache entry for {key}")
                 return None
             
-            entry = EnhancedCacheEntry(**data)
+            # Handle legacy cache format compatibility (temporary during migration)
+            if isinstance(data, dict) and 'data' not in data and 'cached_at' not in data:
+                # This is legacy format - any dict that's not an EnhancedCacheEntry
+                log.debug(f"Migrating legacy cache format for {key}")
+                entry = EnhancedCacheEntry(
+                    data=data,  # Use the whole dict as data
+                    semantic_metadata=None,  # No metadata in legacy format
+                    cached_at=time.time(),  # Assume recent
+                    ttl_seconds=86400
+                )
+                # Save in new format immediately
+                self.cache.set(key, asdict(entry), expire=entry.ttl_seconds)
+                log.debug(f"Migrated {key} to enhanced format")
+            else:
+                # This is enhanced format - deserialize properly
+                try:
+                    if 'semantic_metadata' in data and data['semantic_metadata'] is not None:
+                        # Convert dict back to SemanticMetadata object
+                        metadata_dict = data['semantic_metadata']
+                        data['semantic_metadata'] = SemanticMetadata(**metadata_dict)
+                    
+                    entry = EnhancedCacheEntry(**data)
+                except TypeError as e:
+                    # Fallback: treat as legacy format if deserialization fails
+                    log.debug(f"Falling back to legacy migration for {key}: {e}")
+                    entry = EnhancedCacheEntry(
+                        data=data,  # Use the whole dict as data
+                        semantic_metadata=None,  # No metadata in legacy format
+                        cached_at=time.time(),  # Assume recent
+                        ttl_seconds=86400
+                    )
+                    # Save in new format immediately
+                    self.cache.set(key, asdict(entry), expire=entry.ttl_seconds)
+                    log.debug(f"Migrated {key} to enhanced format via fallback")
+            
             if entry.is_expired:
                 log.debug(f"Enhanced cache expired for {key}")
                 self.cache.delete(key)

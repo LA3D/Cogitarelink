@@ -823,14 +823,26 @@ def get_full_graph(graph_name: str, force: bool) -> Dict[str, Any]:
     # Add rdf: prefix if not present
     cache_key = graph_name if graph_name.startswith('rdf:') else f'rdf:{graph_name}'
     
-    cached_data = cache_manager.get(cache_key)
-    if not cached_data:
+    # Get enhanced cache entry to check semantic metadata state
+    enhanced_entry = cache_manager.get_enhanced(cache_key)
+    if not enhanced_entry:
         return {
             'success': False,
             'error': f'Graph "{graph_name}" not found in cache',
             'available_graphs': [k.replace('rdf:', '') for k in get_available_cache_keys()],
             'suggestion': f'Try: rdf_cache "" --list → See all cached vocabularies'
         }
+    
+    cached_data = enhanced_entry.data
+    
+    # WORKFLOW GUARDRAIL: Check semantic metadata state (Claude Code pattern)
+    metadata_reminder = None
+    if enhanced_entry.semantic_metadata is None:
+        metadata_reminder = (
+            "⚠️ METADATA-FIRST REMINDER: Consider updating semantic metadata "
+            "with --update-metadata before using this vocabulary. Claude Code "
+            "semantic analysis improves query accuracy and workflow efficiency."
+        )
     
     # Check size and apply guardrails (Claude Code safety pattern)
     graph_metadata = cached_data.get('enhanced', {}).get('graph_metadata', {})
@@ -879,6 +891,11 @@ def get_full_graph(graph_name: str, force: bool) -> Dict[str, Any]:
     
     if not safe_to_load:
         result['claude_guidance']['size_warning'] = f'Large ontology ({size_bytes:,} bytes) - loaded with --force override'
+    
+    # Add metadata reminder if needed (Claude Code workflow enforcement)
+    if metadata_reminder:
+        result['system_reminder'] = metadata_reminder
+        result['claude_guidance']['workflow_suggestion'] = f'rdf_cache {graph_name} --update-metadata \'{{...}}\' → Store semantic analysis'
     
     return result
 
@@ -1137,9 +1154,9 @@ def update_cache_metadata(cache_name: str, metadata_json: str) -> Dict[str, Any]
         # Parse the JSON metadata from Claude Code
         metadata = json.loads(metadata_json)
         
-        # Get existing cached data
-        cached_data = cache_manager.get(cache_key)
-        if not cached_data:
+        # Get existing enhanced cache entry
+        enhanced_entry = cache_manager.get_enhanced(cache_key)
+        if not enhanced_entry:
             return {
                 'success': False,
                 'action': 'update_metadata',
@@ -1150,32 +1167,50 @@ def update_cache_metadata(cache_name: str, metadata_json: str) -> Dict[str, Any]
                 'suggestion': f'Use rdf_cache "" --list → See available items'
             }
         
-        # Create/update metadata structure
-        if 'claude_analysis' not in cached_data:
-            cached_data['claude_analysis'] = {}
+        # Create SemanticMetadata object using the proper class
+        from ..backend.cache import SemanticMetadata
+        semantic_metadata = SemanticMetadata(
+            semantic_type=metadata.get('semantic_type', 'unknown'),
+            domains=metadata.get('domains', ['general']),
+            format_type=metadata.get('format_type', 'unknown'),
+            purpose=metadata.get('purpose', 'unknown'),
+            dependencies=metadata.get('dependencies', []),
+            provides=metadata.get('provides', {}),
+            confidence_scores=metadata.get('confidence_scores', {}),
+            vocabulary_size=metadata.get('vocabulary_size', 0),
+            learned_at=metadata.get('learned_at', time.time()),
+            usage_patterns=metadata.get('usage_patterns', [])
+        )
         
-        # Store Claude Code's analysis
-        cached_data['claude_analysis'].update({
-            'semantic_type': metadata.get('semantic_type', 'unknown'),
-            'domains': metadata.get('domains', ['general']),
-            'purpose': metadata.get('purpose', 'unknown'),
-            'dependencies': metadata.get('dependencies', []),
-            'usage_patterns': metadata.get('usage_patterns', []),
-            'confidence': metadata.get('confidence', 0.0),
-            'analysis_notes': metadata.get('notes', ''),
-            'analyzed_at': time.time(),
-            'analyzed_by': 'claude_code'
-        })
+        # Update using the proper enhanced cache method
+        success = cache_manager.update_semantic_metadata(cache_key, semantic_metadata)
         
-        # Save back to cache
-        cache_manager.set(cache_key, cached_data, ttl=86400)
+        if not success:
+            return {
+                'success': False,
+                'action': 'update_metadata',
+                'item': cache_name,
+                'cache_key': cache_key,
+                'error': 'Failed to update semantic metadata',
+                'suggestion': 'Check cache state and try again'
+            }
         
         result = {
             'success': True,
             'action': 'update_metadata',
             'item': cache_name,
             'cache_key': cache_key,
-            'metadata_updated': cached_data['claude_analysis'],
+            'metadata_updated': {
+                'semantic_type': semantic_metadata.semantic_type,
+                'domains': semantic_metadata.domains,
+                'purpose': semantic_metadata.purpose,
+                'dependencies': semantic_metadata.dependencies,
+                'usage_patterns': semantic_metadata.usage_patterns,
+                'confidence': semantic_metadata.confidence_scores.get('classification', 0.0),
+                'analysis_notes': '',
+                'analyzed_at': semantic_metadata.learned_at,
+                'analyzed_by': 'claude_code'
+            },
             'message': f'Updated semantic metadata for "{cache_name}"',
             'claude_guidance': {
                 'annotation_stored': 'Claude Code analysis saved to cache',

@@ -129,7 +129,7 @@ def generate_general_research_instructions() -> str:
     Intelligence in prompts, not complex code.
     """
     
-    return f"""🔬 SEMANTIC RESEARCH MODE ACTIVATED
+    return """🔬 SEMANTIC RESEARCH MODE ACTIVATED
 
 ## Clean Tools Optimized for Claude Code
 
