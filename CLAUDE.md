@@ -4,7 +4,7 @@ Guidance for using CogitareLink's semantic web tools in Claude Code sessions.
 
 ## What is CogitareLink?
 
-Six simple RDF tools that extend Claude Code's built-in capabilities with semantic web functionality. **Natural extensions**, not separate systems.
+Seven simple RDF tools that extend Claude Code's built-in capabilities with semantic web functionality. **Natural extensions**, not separate systems.
 
 **Core Pattern**: `discover → cache → query` (like Read-before-Edit)
 
@@ -41,6 +41,7 @@ cl_search "term" --endpoint NAME         # Find entities (API or SPARQL)
 cl_select "SELECT..." --endpoint NAME    # Explore data with pagination
 cl_describe ENTITY                       # Get complete RDF data
 cl_ask "{SPARQL ASK}"                   # Verify facts (true/false)
+cl_construct TEMPLATE --focus ENTITY    # Apply SHACL reasoning templates
 ```
 
 ## Critical Reminders
@@ -87,6 +88,13 @@ cl_select "SELECT ?id WHERE {wd:Q60235 wdt:P662 ?id}"  # Get PubChem ID
 rdf_cache foaf_vocab --graph                      # Read full ontology
 rdf_cache --subclasses foaf:Agent                 # Find subclasses
 rdf_cache --properties foaf:Person                # Valid properties
+```
+
+### SHACL Template Reasoning
+```bash
+cl_construct --list-templates                     # Show available templates
+cl_construct SC_Transitive --focus up:Protein --endpoint uniprot
+cl_construct DomainEnt --focus foaf:knows --cache-as social_domains
 ```
 
 ## Learning System (Claude Code Memory Pattern)

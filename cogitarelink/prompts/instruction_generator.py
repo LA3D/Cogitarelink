@@ -159,7 +159,7 @@ cl_construct SP_Transitive --focus dbo:Person --endpoint dbpedia
 
 ## Clean Tools Optimized for Claude Code
 
-### 4 Core SPARQL Tools - Simple, Validated, JSON-Only Output with ReadTool-Style Pagination
+### 5 Core SPARQL Tools - Simple, Validated, JSON-Only Output with ReadTool-Style Pagination
 
 **cl_search**: Universal entity search with smart endpoint handling
 - cl_search "caffeine" --limit 5 → Uses efficient Wikidata API search  
@@ -181,6 +181,12 @@ cl_construct SP_Transitive --focus dbo:Person --endpoint dbpedia
 - cl_ask "{{ wd:Q905695 wdt:P31 wd:Q8054 }}" → true/false if UniProt is a database
 - cl_ask "{{ ?protein a up:Protein }}" --endpoint uniprot → Check if proteins exist
 - Returns JSON with boolean result for existence/verification checks
+
+**cl_construct**: SHACL template reasoning for knowledge graph construction
+- cl_construct SC_Transitive --focus up:Protein --endpoint uniprot → Find transitive subclass relationships
+- cl_construct DomainEnt --focus "up:recommendedName" --endpoint uniprot → Infer types from property domains
+- cl_construct --list-templates → Show available SHACL reasoning patterns
+- Returns constructed triples with applied reasoning templates for knowledge synthesis
 
 ### 2 RDF Content Negotiation Tools - Discovery-First Guardrails ⚠️
 
@@ -485,7 +491,8 @@ def get_tool_specific_instructions(tool_name: str) -> str:
         'cl_search': _get_cl_search_instructions(),
         'cl_select': _get_cl_select_instructions(),
         'cl_describe': _get_cl_describe_instructions(),
-        'cl_ask': _get_cl_ask_instructions()
+        'cl_ask': _get_cl_ask_instructions(),
+        'cl_construct': _get_cl_construct_instructions()
     }
     
     return tool_instructions.get(tool_name, f"Tool '{tool_name}' not found. Available: {list(tool_instructions.keys())}")
@@ -1102,12 +1109,151 @@ cl_ask "{ wd:Q905695 wdt:P1687 ?prop }"        # Issues properties check
 - ✅ Composition opportunities suggest logical follow-up analysis"""
 
 
+def _get_cl_construct_instructions() -> str:
+    """cl_construct tool-specific instructions following Claude Code patterns."""
+    return """🔧 **CL_CONSTRUCT: SHACL Template Reasoning for Knowledge Graph Construction**
+
+**PURPOSE**: Apply SHACL reasoning templates to discovered vocabularies for knowledge graph construction
+
+**DISCOVERY WORKFLOW STEP 4 of 4**:
+1. rdf_get {endpoint} --cache-as service    ← Service discovery  
+2. rdf_cache service --update-metadata      ← Vocabulary analysis
+3. cl_select with discovered URIs           ← Data exploration
+4. cl_construct --template reasoning        ← Knowledge synthesis (current)
+
+**AVAILABLE SHACL TEMPLATES**:
+```bash
+# List all available reasoning templates
+cl_construct --list-templates
+
+# Get detailed template information
+cl_construct --describe SC_Transitive
+cl_construct --describe DomainEnt
+```
+
+**TEMPLATE APPLICATION PATTERNS**:
+```bash
+# Subclass transitivity reasoning
+cl_construct SC_Transitive --focus up:Protein --endpoint uniprot --cache-as protein_hierarchy
+
+# Property domain entailment
+cl_construct DomainEnt --focus "up:recommendedName" --endpoint uniprot --cache-as protein_domains
+
+# Range entailment for property constraints
+cl_construct RangeEnt --focus foaf:knows --endpoint wikidata --cache-as social_ranges
+
+# Schema.org soft type inference
+cl_construct SchemaDomainEnt --focus schema:name --endpoint schema_org --cache-as schema_hints
+```
+
+**TEMPLATE TYPES**:
+- **SC_Transitive**: Find transitive subclass relationships (C1 ⊑ C2, C2 ⊑ C3 ⇒ C1 ⊑ C3)
+- **SP_Transitive**: Find transitive subproperty relationships 
+- **DomainEnt**: Infer types from property domains (P rdfs:domain D, S P O ⇒ S a D)
+- **RangeEnt**: Infer types from property ranges (P rdfs:range R, S P O ⇒ O a R)
+- **SchemaDomainEnt**: Soft type inference from schema.org (confidence 0.6)
+- **InverseEnt**: Apply inverse properties (P owl:inverseOf Q, S P O ⇒ O Q S)
+
+**OUTPUT STRUCTURE** (Constructed Knowledge Graph):
+```json
+{
+  "success": true,
+  "template": "SC_Transitive",
+  "template_name": "Subclass Transitivity",
+  "focus": "up:Protein",
+  "endpoint": "uniprot",
+  "constructed_triples": 47,
+  "format": "json-ld",
+  "data": {
+    "@context": {...},
+    "@graph": [
+      {
+        "@id": "up:ProteinComplex",
+        "rdfs:subClassOf": {"@id": "up:Protein"}
+      }
+    ]
+  },
+  "query_used": "PREFIX up: <http://purl.uniprot.org/core/> CONSTRUCT { ?c1 rdfs:subClassOf ?c3 } WHERE { ?c1 rdfs:subClassOf ?c2 . ?c2 rdfs:subClassOf ?c3 . FILTER NOT EXISTS { ?c1 rdfs:subClassOf ?c3 } }",
+  "cached": true,
+  "cache_key": "protein_hierarchy"
+}
+```
+
+**VOCABULARY TRANSLATION** (Software 2.0):
+Templates automatically translate generic RDFS/OWL vocabulary to endpoint-specific vocabulary:
+- **Wikidata**: rdfs:subClassOf → wdt:P279, rdf:type → wdt:P31
+- **UniProt**: Uses standard RDFS/OWL vocabulary directly
+- **Custom**: Applies discovered vocabulary mappings from rdf_cache analysis
+
+**VALIDATION RULES**:
+- Template: Must be valid template name from --list-templates
+- Focus: Optional entity/class for template application (e.g., up:Protein, foaf:Person)
+- Endpoint: Must support SPARQL CONSTRUCT queries
+- Limit: 1-1000 constructed triples (default: 100)
+
+**DISCOVERY-FIRST GUARDRAILS** ⚠️:
+```bash
+# ✅ CORRECT: Discovery-first workflow
+rdf_get https://sparql.uniprot.org/sparql --cache-as uniprot_service
+rdf_cache uniprot_service --graph
+cl_construct SC_Transitive --focus up:Protein --endpoint uniprot
+
+# ❌ INCORRECT: Direct reasoning without discovery
+cl_construct SC_Transitive --focus "guessed:Protein"  # No vocabulary discovery
+```
+
+**CACHING & REUSE PATTERNS**:
+```bash
+# Cache constructed knowledge for reuse
+cl_construct DomainEnt --focus up:enzyme --endpoint uniprot --cache-as enzyme_domains
+
+# Analyze cached constructed knowledge
+rdf_cache enzyme_domains --graph
+rdf_cache enzyme_domains --update-metadata '{"reasoning_type": "domain_entailment", "confidence": 0.9}'
+```
+
+**FOCUS EXAMPLES BY TYPE**:
+- **Class focus**: up:Protein, foaf:Person, schema:Organization, wd:Q8054
+- **Property focus**: up:recommendedName, foaf:knows, schema:name, wdt:P31
+
+**WORKFLOW INTEGRATION**:
+1. **After vocabulary discovery**: Use cl_construct to synthesize new knowledge
+2. **Before complex queries**: Apply reasoning templates to expand available relationships
+3. **For ontology enrichment**: Use constructed triples to understand implicit connections
+4. **In research analysis**: Cache reasoning results for systematic knowledge building
+
+**PERFORMANCE CONSIDERATIONS**:
+- **Template complexity**: Simple templates (DomainEnt) execute faster than complex ones (SP_Transitive)
+- **Endpoint optimization**: Domain-specific endpoints often have optimized reasoning
+- **Result caching**: Cache constructed graphs for reuse in analysis
+- **Timeout handling**: 30-second timeout with graceful degradation
+
+**COMMON USE CASES**:
+- **Ontology completion**: Find missing subclass relationships
+- **Type inference**: Discover implicit entity types from property usage
+- **Knowledge enrichment**: Expand available relationships for research
+- **Consistency checking**: Verify ontological consistency across endpoints
+
+**ERROR HANDLING**:
+- **Unknown template** → Use --list-templates to see available options
+- **Discovery required** → Run rdf_get + rdf_cache before reasoning
+- **Incompatible endpoint** → Check template compatibility with vocabulary
+- **Timeout errors** → Reduce --limit or use more specific --focus
+
+**SUCCESS INDICATORS**:
+- ✅ Uses discovered vocabulary from previous rdf_cache exploration
+- ✅ Constructs meaningful new triples with proper RDF structure
+- ✅ Template compatibility verified with endpoint vocabulary
+- ✅ Cached results available for systematic knowledge building
+- ✅ Performance within acceptable limits with proper timeout handling"""
+
+
 def compile_all_tool_instructions() -> Dict[str, str]:
     """Compile all tool-specific instructions for embedding in prompts.
     
     Following Claude Code pattern of comprehensive tool guidance compilation.
     """
-    tools = ['rdf_get', 'rdf_cache', 'cl_search', 'cl_select', 'cl_describe', 'cl_ask']
+    tools = ['rdf_get', 'rdf_cache', 'cl_search', 'cl_select', 'cl_describe', 'cl_ask', 'cl_construct']
     
     return {
         tool_name: get_tool_specific_instructions(tool_name) 
