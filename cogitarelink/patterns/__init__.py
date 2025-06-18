@@ -1,16 +1,12 @@
-"""Pattern learning system for CogitareLink tools.
+"""Pattern learning system for CogitareLink.
 
-Simple event capture and reminder system following Claude Code patterns.
-Tools observe, Claude interprets, reminders focus attention.
+Simple approach: capture session narratives in markdown, 
+manually distill into CLAUDE.md improvements when requested.
+
+## Structure
+- use_cases/: Session capture templates and examples
+- README.md: Documentation of the simple learning approach
+
+## Philosophy  
+Start simple: manual capture and distillation until we prove the value.
 """
-
-# Core interfaces (to be implemented)
-# from .event_capture import capture_tool_event
-# from .reminder_system import get_tool_reminders  
-# from .pattern_storage import store_session_pattern
-
-__all__ = [
-    # "capture_tool_event",
-    # "get_tool_reminders", 
-    # "store_session_pattern"
-]

@@ -67,17 +67,44 @@ rdf_cache --subclasses foaf:Agent                 # Find subclasses
 rdf_cache --properties foaf:Person                # Valid properties
 ```
 
-## Session Annotation & Knowledge Capture
+## Learning System (Claude Code Memory Pattern)
 
-After discovering something useful, annotate it for future sessions:
+CogitareLink includes a memory system that follows Claude Code's approach to learning from usage patterns.
 
-```bash
-rdf_cache uniprot --update-metadata '{
-  "semantic_type": "service",
-  "domains": ["biology"],
-  "notes": "Use up:Protein for protein queries"
-}'
+### Session Capture
+After research sessions, capture what worked/failed in natural narrative:
+
+```markdown
+# cogitarelink/patterns/use_cases/session_2024_06_17_14.md
+
+**Domain**: biology  
+**Goal**: Find drug targets related to COVID-19 spike protein
+
+## Session Narrative
+I tried direct UniProt search first but it failed with timeouts. The breakthrough 
+came when I used Wikidata as a hub - cl_search "SARS-CoV-2" found the entity, 
+then cl_describe gave me P352 cross-reference to UniProt P0DTC2...
 ```
+
+### Memory Distillation
+Claude analyzes session narratives and extracts CLAUDE.md-style memories:
+
+```markdown
+### Discovery-First Workflow
+- Always use discovery-first workflow when working with unfamiliar endpoints (prevents 403 errors)
+- Cache service descriptions early to avoid repeated discovery overhead
+
+### Biology Research Patterns  
+- Use Wikidata as discovery hub, then follow cross-references to domain databases
+- P352 (UniProt protein ID) is highly reliable bridge property for protein research
+
+### Anti-Patterns to Avoid
+- NEVER assume all endpoints support Wikidata-style API search → UniProt needs FILTER patterns
+- Don't try direct domain database search → cross-reference following is more reliable
+```
+
+### Why This Works
+Like Claude Code's auto-compact system, we distill rich research narratives into focused reminders that prevent repeated mistakes and speed up future work.
 
 ## Prompting Architecture (Claude Code Pattern)
 
@@ -97,21 +124,6 @@ Following Claude Code's architecture, we use **reminders, not tutorials**:
 - Others → SPARQL fallback (REF: endpoint-behaviors)
 - Empty = error (REF: validation-rules)
 ```
-
-### Knowledge Distillation Workflow
-
-1. **Usage Annotation** - Claude records what worked/failed:
-```bash
-rdf_cache tool_usage --update-metadata '{
-  "tool": "cl_search",
-  "what_worked": "Wikidata API 10x faster than SPARQL",
-  "what_failed": "UniProt needs FILTER regex",
-  "edge_case": "Empty results need explicit handling"
-}'
-```
-
-2. **Pattern Extraction** - Distill critical patterns from usage
-3. **Reminder Generation** - Create focused attention pointers
 
 ### Why This Works
 

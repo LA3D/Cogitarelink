@@ -1,116 +1,62 @@
-# CogitareLink Pattern Learning Architecture
+# CogitareLink Pattern Learning System
 
-This directory implements a simple learning system following Claude Code design patterns.
+Simple approach: capture session narratives in markdown, manually distill into CLAUDE.md improvements when requested.
 
-## Philosophy: Tools as Sensors, Claude as Brain
+## Philosophy: Start Simple, Test Immediately
 
-**Core Principle**: Tools observe and report facts. Claude Code interprets patterns and provides intelligence.
+Following Jeremy Howard's approach - build the simplest thing that works, then iterate.
 
-## Architecture Overview
+## What We Actually Need Right Now
 
-### 1. Event Capture (Simple Facts)
-Tools emit structured events about what happened:
-```json
-{
-  "tool": "cl_search", 
-  "success": true,
-  "strategy": "wikidata_api",
-  "time_ms": 145,
-  "context": {"had_cache": true}
-}
-```
+### Session Capture Template
+- Human fills out session narrative in `use_cases/template.md`
+- Natural story format: what worked, what failed, key insights
+- No complex structured data or automation
 
-### 2. Pattern Storage (Human-Readable)
+### Manual Distillation When Requested  
+- Human says "Claude, read my session files and suggest CLAUDE.md improvements"
+- Claude reads markdown files and suggests specific CLAUDE.md additions
+- Human manually adds good suggestions to CLAUDE.md
+
+**That's it.** No complex infrastructure until we prove this simple approach works.
+
+## Example Workflow
+
+1. **After research session**: Copy `template.md`, fill out narrative about what happened
+2. **When ready to improve**: "Claude, analyze my biology sessions and suggest CLAUDE.md updates"
+3. **Claude responds**: "Based on your sessions, I suggest adding: '- Always start biology research with Wikidata search for cross-references'"
+4. **Human decides**: Manually add good suggestions to CLAUDE.md
+
+## Directory Structure
+
 ```
 cogitarelink/patterns/
-├── README.md           # This file
-├── events/             # Raw tool events  
-├── session/            # Within-session patterns
-├── distilled/          # Claude's interpretations
-└── reminders/          # Active reminder templates
+├── README.md              # This file - simple approach documentation
+├── use_cases/             # Session capture templates and examples
+│   ├── template.md        # Template for capturing session narratives
+│   └── example_*.md       # Example completed session narratives
 ```
 
-### 3. Reminder Injection (Claude Code Style)
-Like Claude Code's tools, reminders focus attention:
-```
-⚡ cl_search reminders:
-- Wikidata → API first (faster)
-- Others → SPARQL fallback  
-- Empty query = error
-```
+## What We're NOT Building (Yet)
 
-### 4. Learning Loop
+- Automated pattern extraction systems
+- Complex data storage and retrieval 
+- Real-time instruction enhancement
+- Statistical analysis of usage patterns
+- Integration hooks into tool execution
 
-**Session Level**:
-1. Tools capture events during use
-2. Claude analyzes patterns within session
-3. Reminders adjusted for current context
+## The Vision
 
-**Cross-Session Level**:
-1. Claude distills successful patterns
-2. Updates reminder templates
-3. Improves default behavior
+Like Claude Code's auto-compact system, we want to distill rich semantic web research narratives into focused reminders that prevent repeated mistakes and speed up future work.
 
-## Design Constraints
+But we start with the simplest possible implementation: manual capture, manual distillation, manual integration.
 
-### Keep It Simple
-- **No ML models** - Just pattern observation
-- **No complex logic** - Tools stay simple
-- **Human readable** - All patterns stored as text
-- **Immediate application** - No training/deployment cycle
+## Future Phases (Only If Simple Approach Proves Valuable)
 
-### Follow Claude Code Patterns
-- **Tools provide data** - Intelligence in prompts
-- **Fail-fast** - Clear errors, not silent failures
-- **Composable** - Each tool does one thing well
-- **Observable** - Users can see what's happening
+**Phase 2**: Simple prompt templates for Claude to analyze session narratives more systematically
 
-### Privacy & Control
-- **Local only** - No cloud pattern sharing
-- **User controlled** - Can clear/export patterns
-- **Transparent** - Users see what was learned
+**Phase 3**: Basic integration to suggest CLAUDE.md updates automatically
 
-## Implementation Notes
+**Phase 4**: Multi-session pattern accumulation
 
-### Event Schema (Keep Simple)
-```python
-@dataclass
-class ToolEvent:
-    tool: str           # Tool name
-    success: bool       # Did it work?
-    time_ms: float      # How long?
-    strategy: str       # What approach used?
-    context: dict       # Relevant session state
-```
-
-### Reminder System (Focus Attention)
-```python
-def get_reminders(tool_name: str, context: dict) -> list[str]:
-    """Return attention-focusing reminders for tool use."""
-    # Static critical reminders (always shown)
-    # + contextual reminders (based on session state)
-    # + learned reminders (from distilled patterns)
-```
-
-### Integration Points
-1. **Tool initialization** - Load relevant reminders
-2. **Pre-execution** - Show contextual reminders  
-3. **Post-execution** - Capture event data
-4. **Error cases** - Record failure patterns
-
-## Success Metrics
-
-- **Fewer repeated mistakes** - Same errors don't happen twice
-- **Faster discovery** - Tools suggest better approaches
-- **Context awareness** - Reminders adapt to session state
-- **Progressive learning** - System gets smarter through use
-
-## NOT Goals
-
-- Complex AI/ML systems
-- Prediction/forecasting  
-- Automated decision making
-- User behavior tracking
-- Performance optimization algorithms
-
-The goal is simple: help Claude Code learn the patterns that make semantic web research effective, then remind users of those patterns at the right moments.
+But we don't build any of this until Phase 1 (manual process) proves the value.
