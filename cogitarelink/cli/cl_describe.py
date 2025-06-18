@@ -15,7 +15,7 @@ import httpx
 from rdflib import Graph
 from pyld import jsonld
 
-from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query, get_entity_uri, find_endpoint_for_entity
+from ..backend.sparql import build_prefixed_query, get_entity_uri, find_endpoint_for_entity, resolve_endpoint
 from ..utils.logging import get_logger
 
 log = get_logger("cl_describe")
@@ -37,7 +37,8 @@ def validate_describe_entity(entity: str) -> dict:
         entity.startswith(("UP", "A", "O")) or  # UniProt IDs  
         entity.startswith("WP") or  # WikiPathways IDs
         entity.startswith("http") or  # Full URIs
-        entity.startswith(("wd:", "up:", "wp:"))):  # Prefixed entities
+        entity.startswith(("wd:", "up:", "wp:", "dbo:", "dbr:")) or  # Prefixed entities
+        ":" in entity):  # Any prefixed entity
         return {"valid": True}
     
     # Allow simple alphanumeric IDs that might be valid for some endpoints
@@ -82,27 +83,24 @@ def describe(entity: str, endpoint: Optional[str], timeout: int):
         sys.exit(1)
     
     try:
-        # Determine endpoint
+        # Determine endpoint using unified resolution
         if endpoint:
-            if endpoint.startswith("http"):
-                endpoint_url = endpoint
-            else:
-                endpoints = discover_sparql_endpoints()
-                endpoint_url = endpoints.get(endpoint)
-                if not endpoint_url:
-                    available = list(endpoints.keys())
-                    error_output = {
-                        "error": f"Unknown endpoint: {endpoint}",
-                        "available_endpoints": available,
-                        "success": False
-                    }
-                    click.echo(json.dumps(error_output), err=True)
-                    sys.exit(1)
+            try:
+                endpoint_url, _ = resolve_endpoint(endpoint)
+            except ValueError as e:
+                error_output = {
+                    "error": str(e),
+                    "entity": entity,
+                    "query_type": "DESCRIBE",
+                    "success": False
+                }
+                click.echo(json.dumps(error_output), err=True)
+                sys.exit(1)
         else:
             # Auto-detect endpoint based on entity ID
             endpoint_url = find_endpoint_for_entity(entity)
             if not endpoint_url:
-                endpoint_url = discover_sparql_endpoints().get("wikidata")
+                endpoint_url, _ = resolve_endpoint("wikidata")
             endpoint = "auto-detected"
         
         # Construct entity URI
@@ -112,7 +110,7 @@ def describe(entity: str, endpoint: Optional[str], timeout: int):
         sparql_query = f"DESCRIBE <{entity_uri}>"
         
         # Add prefixes automatically
-        prefixed_query = build_prefixed_query(sparql_query, endpoint_url)
+        prefixed_query = build_prefixed_query(sparql_query, endpoint if endpoint != "auto-detected" else "wikidata")
         
         log.debug(f"Executing DESCRIBE query on {endpoint_url}:\\n{prefixed_query}")
         

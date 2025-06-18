@@ -13,7 +13,7 @@ from typing import Optional
 import click
 import httpx
 
-from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query
+from ..backend.sparql import build_prefixed_query, resolve_endpoint
 from ..utils.logging import get_logger
 
 log = get_logger("cl_ask")
@@ -87,28 +87,25 @@ def ask(query: str, endpoint: Optional[str], timeout: int):
         sys.exit(1)
     
     try:
-        # Determine endpoint
+        # Determine endpoint using unified resolution
         if endpoint:
-            if endpoint.startswith("http"):
-                endpoint_url = endpoint
-            else:
-                endpoints = discover_sparql_endpoints()
-                endpoint_url = endpoints.get(endpoint)
-                if not endpoint_url:
-                    available = list(endpoints.keys())
-                    error_output = {
-                        "error": f"Unknown endpoint: {endpoint}",
-                        "available_endpoints": available
-                    }
-                    click.echo(json.dumps(error_output), err=True)
-                    sys.exit(1)
+            try:
+                endpoint_url, _ = resolve_endpoint(endpoint)
+            except ValueError as e:
+                error_output = {
+                    "error": str(e),
+                    "query": query,
+                    "query_type": "ASK",
+                    "success": False
+                }
+                click.echo(json.dumps(error_output), err=True)
+                sys.exit(1)
         else:
-            endpoints = discover_sparql_endpoints()
-            endpoint_url = endpoints.get("wikidata")
+            endpoint_url, _ = resolve_endpoint("wikidata")
             endpoint = "wikidata"
         
         # Add prefixes automatically
-        prefixed_query = build_prefixed_query(query.strip(), endpoint_url)
+        prefixed_query = build_prefixed_query(query.strip(), endpoint or "wikidata")
         
         log.debug(f"Executing ASK query on {endpoint_url}:\\n{prefixed_query}")
         

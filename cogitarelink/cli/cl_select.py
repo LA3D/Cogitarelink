@@ -13,7 +13,7 @@ from typing import Optional
 import click
 import httpx
 
-from ..backend.sparql import discover_sparql_endpoints, build_prefixed_query
+from ..backend.sparql import build_prefixed_query, resolve_endpoint
 from ..backend.cache import cache_manager
 from ..utils.logging import get_logger
 
@@ -93,25 +93,21 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
         sys.exit(1)
     
     try:
-        # Determine endpoint
+        # Determine endpoint using unified resolution
         if endpoint:
-            if endpoint.startswith("http"):
-                endpoint_url = endpoint
-            else:
-                endpoints = discover_sparql_endpoints()
-                endpoint_url = endpoints.get(endpoint)
-                if not endpoint_url:
-                    available = list(endpoints.keys())
-                    error_output = {
-                        "error": f"Unknown endpoint: {endpoint}",
-                        "available_endpoints": available,
-                        "success": False
-                    }
-                    click.echo(json.dumps(error_output), err=True)
-                    sys.exit(1)
+            try:
+                endpoint_url, _ = resolve_endpoint(endpoint)
+            except ValueError as e:
+                error_output = {
+                    "error": str(e),
+                    "query": query,
+                    "query_type": "SELECT",
+                    "success": False
+                }
+                click.echo(json.dumps(error_output), err=True)
+                sys.exit(1)
         else:
-            endpoints = discover_sparql_endpoints()
-            endpoint_url = endpoints.get("wikidata")
+            endpoint_url, _ = resolve_endpoint("wikidata")
             endpoint = "wikidata"
         
         # Prepare query - don't add SELECT if already present
@@ -129,7 +125,7 @@ def select(query: str, endpoint: Optional[str], limit: int, offset: int, timeout
         sparql_query += f" LIMIT {limit}"
         
         # Add prefixes automatically
-        prefixed_query = build_prefixed_query(sparql_query, endpoint_url)
+        prefixed_query = build_prefixed_query(sparql_query, endpoint)
         
         log.debug(f"Executing SELECT query on {endpoint_url}:\\n{prefixed_query}")
         
@@ -248,11 +244,10 @@ def check_vocabulary_discovery(endpoint: str) -> Optional[str]:
         return None
     
     # Get the actual endpoint URL for service description discovery
-    from ..backend.sparql import discover_sparql_endpoints
-    endpoints = discover_sparql_endpoints()
-    endpoint_url = endpoints.get(endpoint)
-    
-    if not endpoint_url:
+    from ..backend.sparql import resolve_endpoint
+    try:
+        endpoint_url, _ = resolve_endpoint(endpoint)
+    except ValueError:
         return None  # This will be caught by earlier endpoint validation
     
     # Look for cached SPARQL service description for this endpoint
