@@ -1,1 +1,0 @@
-"""Agent prompt templates for multi-agent coordination."""
