@@ -121,16 +121,34 @@ This creates a **semantic feedback loop**: each query enriches Claude's understa
 - **Rich insights**: Claude can synthesize information across multiple linked datasets
 - **Reliable results**: Discovery-first workflow prevents common semantic web errors
 
-## Known Endpoints
+## Endpoint Discovery
 
-Built-in support for major semantic web databases:
+CogitareLink doesn't limit Claude to hard-coded endpoints. Instead, Claude dynamically discovers semantic web databases through multiple pathways:
 
-- **`wikidata`** - General knowledge graph (500M+ entities)
+**Starting Suggestions** (Not Limitations):
+- **`wikidata`** - General knowledge graph (500M+ entities) and discovery hub
 - **`uniprot`** - Protein sequences and functions (225B+ triples)  
 - **`wikipathways`** - Biological pathways and reactions
 - **`dbpedia`** - Structured Wikipedia data
 
-Claude can also work with any SPARQL endpoint URL.
+**Dynamic Discovery Methods**:
+
+1. **Web Search Discovery**: Claude uses WebSearch to find domain-specific SPARQL endpoints
+   - "protein database SPARQL endpoint" → discovers UniProt, Ensembl, PDB
+   - "chemistry knowledge graph" → finds ChEMBL, PubChem, ChEBI endpoints
+
+2. **Wikidata External Identifier Mining**: Claude follows Wikidata's rich external identifier structure
+   - P352 (UniProt ID) → leads to UniProt SPARQL endpoint  
+   - P662 (PubChem CID) → discovers PubChem RDF services
+   - P594 (Ensembl ID) → finds Ensembl genome databases
+   - 9000+ external identifier properties create pathways to specialized databases
+
+3. **Cross-Reference Following**: Claude discovers new endpoints through entity relationships
+   - Follows rdfs:seeAlso links in retrieved RDF data
+   - Discovers federated query endpoints through service descriptions
+   - Maps equivalent entities across different knowledge graphs
+
+This creates an **expanding research universe** where Claude's knowledge of available semantic web resources grows through each research session, rather than being confined to a predetermined list.
 
 ## Example: Biology Research
 
